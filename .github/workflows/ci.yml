@@ -12,6 +12,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
+          # Pinned to the SDK the package is developed and formatted with:
+          # `dart format --set-exit-if-changed` differs between formatter
+          # versions, and a newer stable rewrites analysis_options.yaml.
+          flutter-version: 3.44.6
           channel: stable
           cache: true
       - run: flutter --version
