@@ -56,7 +56,8 @@ void main() {
       expect(
         visibleText(tester),
         plainThinkingText,
-        reason: '整形しないので ** は太字にならず素の文字のまま残り、'
+        reason:
+            '整形しないので ** は太字にならず素の文字のまま残り、'
             '改行も文字として残る (届いた文字列がそのまま可視文字列になる)',
       );
       expect(
@@ -67,39 +68,38 @@ void main() {
     },
   );
 
-  testWidgets(
-    'AC-31 出現中の文字が無くなる (全部が不透明度 1) と、以後フレームを要求しない',
-    (tester) async {
-      final controller = StreamingReplyController();
-      await pumpRevealedMarkdown(tester, controller);
+  testWidgets('AC-31 出現中の文字が無くなる (全部が不透明度 1) と、以後フレームを要求しない', (tester) async {
+    final controller = StreamingReplyController();
+    await pumpRevealedMarkdown(tester, controller);
 
-      controller.addChunk(const Chunk(shortReplyText));
-      await tester.pump();
-      expect(
-        tester.binding.hasScheduledFrame,
-        isTrue,
-        reason: '前提: 出現中の文字がある間はフレームを要求している '
-            '(この主張が常に false なら、後の isFalse は何も確かめていない)',
-      );
+    controller.addChunk(const Chunk(shortReplyText));
+    await tester.pump();
+    expect(
+      tester.binding.hasScheduledFrame,
+      isTrue,
+      reason:
+          '前提: 出現中の文字がある間はフレームを要求している '
+          '(この主張が常に false なら、後の isFalse は何も確かめていない)',
+    );
 
-      controller.complete();
-      await pumpFrames(tester, revealAllDuration);
+    controller.complete();
+    await pumpFrames(tester, revealAllDuration);
 
-      expect(
-        revealedSpans(tester).map((span) => span.opacity),
-        everyElement(closeTo(1, opacityTolerance)),
-        reason: '前提: 出現中の文字が 1 つも残っていない',
-      );
+    expect(
+      revealedSpans(tester).map((span) => span.opacity),
+      everyElement(closeTo(1, opacityTolerance)),
+      reason: '前提: 出現中の文字が 1 つも残っていない',
+    );
 
-      await tester.pump(frameInterval);
-      await tester.pump(frameInterval);
+    await tester.pump(frameInterval);
+    await tester.pump(frameInterval);
 
-      expect(
-        tester.binding.hasScheduledFrame,
-        isFalse,
-        reason: '出現中の文字が無くなったら Ticker を止め、次のフレームを予約しない '
-            '(予約し続けると、何も動いていないのに毎フレーム描き直すことになる)',
-      );
-    },
-  );
+    expect(
+      tester.binding.hasScheduledFrame,
+      isFalse,
+      reason:
+          '出現中の文字が無くなったら Ticker を止め、次のフレームを予約しない '
+          '(予約し続けると、何も動いていないのに毎フレーム描き直すことになる)',
+    );
+  });
 }

@@ -40,6 +40,18 @@ app.*.symbols
 app.*.map.json
 
 # Android Studio will place build artifacts here
-/android/app/debug
-/android/app/profile
-/android/app/release
+/example/android/app/debug
+/example/android/app/profile
+/example/android/app/release
+
+# The package root does not track a lockfile; the example app does.
+/pubspec.lock
+
+# Generated files for the example app.
+/example/.dart_tool/
+/example/build/
+/example/coverage/
+
+# Local secrets (API keys passed via --dart-define). Never committed.
+.env
+.env.*

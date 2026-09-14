@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:streaming_markdown_widget/src/keys.dart';
-import 'package:streaming_markdown_widget/src/reply_theme.dart';
-import 'package:streaming_markdown_widget/src/streaming_reply.dart';
-import 'package:streaming_markdown_widget/src/streaming_reply_controller.dart';
+import 'package:streaming_markdown_widget/streaming_markdown_widget.dart';
 
 import 'helpers/reveal.dart';
 
@@ -42,7 +40,7 @@ class _ThinkingFeed {
 /// (AC-15, AC-16, AC-17, AC-18, AC-19, AC-21)。
 ///
 /// 主張するのは状態遷移とタップ — 思考の枠が出る・消える条件、本文の高さ
-/// (1 行 / 全部 / 0)、見出し行の文言、返答の吹き出しと待機の点の居る・
+/// (1 行 / 全部 / 0)、見出し行の文言、返答の文字と待機の点の居る・
 /// 居ない、そして返答が流れ始める順番。見出し行の光の流れ方・色・余白・待機の
 /// 点の見た目は spec の「テストしないと決めたもの」なので触らない。
 ///
@@ -65,8 +63,13 @@ void main() {
   /// 返答の Widget を置く幅。思考の文が必ず 2 行以上に折り返る狭さにする。
   const replyWidth = 360.0;
 
+  /// 省略時の基準値 (思考の文の文字サイズ 12.5 と行間 1.7 を読む)。
+  final defaultStyle = StreamingReplyStyle();
+
   /// 思考の文 1 行の高さ (12.5 × 1.7 = 21.25)。
-  const oneLineHeight = ReplyTheme.thinkingFontSize * ReplyTheme.thinkingHeight;
+  final oneLineHeight =
+      defaultStyle.thinkingTextStyle.fontSize! *
+      defaultStyle.thinkingTextStyle.height!;
 
   /// 高さの比較に許す誤差。
   const heightTolerance = 1.0;
@@ -120,7 +123,13 @@ void main() {
             child: SizedBox(
               width: replyWidth,
               child: SingleChildScrollView(
-                child: StreamingReply(controller: controller),
+                child: StreamingReply(
+                  controller: controller,
+                  // 見出し行の文言の既定は「…」なので、このファイルが主張する
+                  // 「考え中…」「n 秒考えました」は利用側として渡す。
+                  thinkingTitle: thinkingTitle,
+                  thoughtForSeconds: (seconds) => '$seconds 秒考えました',
+                ),
               ),
             ),
           ),
@@ -135,7 +144,11 @@ void main() {
     _ThinkingFeed feed,
     Duration total,
   ) async {
-    for (var elapsed = Duration.zero; elapsed < total; elapsed += frameInterval) {
+    for (
+      var elapsed = Duration.zero;
+      elapsed < total;
+      elapsed += frameInterval
+    ) {
       feed.topUp();
       await tester.pump(frameInterval);
     }
@@ -174,16 +187,8 @@ void main() {
   /// 矢印は spec の改訂 (2026-09-12) で見出し行から無くしたので、Key ではなく
   /// 字そのものの不在で主張する (Key が消えてもこのテストは主張を保つ)。
   void expectNoArrow(WidgetTester tester) {
-    expect(
-      find.text('▸'),
-      findsNothing,
-      reason: '見出し行に開閉を示す矢印 (▸) は置かない',
-    );
-    expect(
-      find.text('▾'),
-      findsNothing,
-      reason: '見出し行に開閉を示す矢印 (▾) は置かない',
-    );
+    expect(find.text('▸'), findsNothing, reason: '見出し行に開閉を示す矢印 (▸) は置かない');
+    expect(find.text('▾'), findsNothing, reason: '見出し行に開閉を示す矢印 (▾) は置かない');
   }
 
   /// 本文の箱の高さ (1 行 / 全部 / 0)。
@@ -210,26 +215,29 @@ void main() {
   void expectLatestLineVisible(WidgetTester tester) {
     expect(
       tester.getRect(find.byKey(Keys.thinkingText)).bottom,
-      closeTo(tester.getRect(find.byKey(Keys.thinkingFrameBody)).bottom, heightTolerance),
+      closeTo(
+        tester.getRect(find.byKey(Keys.thinkingFrameBody)).bottom,
+        heightTolerance,
+      ),
       reason: '思考の文の末尾が箱の下端にそろう = 最新の行が見える',
     );
   }
 
   testWidgets(
-    'AC-15 思考の塊が届き始めると、思考の枠に「考え中…」の見出し行が出て思考の文が 1 文字ずつ出現し、返答の吹き出しと待機の点は居なくなる',
+    'AC-15 思考の塊が届き始めると、思考の枠に「考え中…」の見出し行が出て思考の文が 1 文字ずつ出現し、待機の点は居なくなる',
     (tester) async {
       final controller = StreamingReplyController();
       await pumpStreamingReply(tester, controller);
 
       expect(
-        find.byKey(Keys.replyBubble),
-        findsOneWidget,
-        reason: '前提: 受信前は返答の吹き出しが居る',
+        find.byKey(Keys.replyText),
+        findsNothing,
+        reason: '前提: 受信前は返答の文字がまだ無い',
       );
       expect(
         find.byKey(Keys.waitingDots),
         findsOneWidget,
-        reason: '前提: 受信前は吹き出しの中に待機の点が居る',
+        reason: '前提: 受信前は返答の文字が置かれる位置に待機の点が居る',
       );
       expect(
         find.byKey(Keys.thinkingFrame),
@@ -242,11 +250,7 @@ void main() {
       await tester.pump();
 
       expect(find.byKey(Keys.thinkingFrame), findsOneWidget, reason: '思考の枠が出る');
-      expect(
-        headTitle(tester),
-        thinkingTitle,
-        reason: '思考が流れている間の見出し行は「考え中…」',
-      );
+      expect(headTitle(tester), thinkingTitle, reason: '思考が流れている間の見出し行は「考え中…」');
 
       await pumpFrames(tester, revealInterval * 2);
       final startedChars = revealedCharCount(tester, Keys.thinkingText);
@@ -259,20 +263,22 @@ void main() {
         reason: 'フレームを進めると思考の可視文字列が増える (1 文字ずつ出現する)',
       );
       expect(
-        thinkingText.startsWith(visibleText(tester, within: find.byKey(Keys.thinkingText))),
+        thinkingText.startsWith(
+          visibleText(tester, within: find.byKey(Keys.thinkingText)),
+        ),
         isTrue,
         reason: '見えているのは思考の文の先頭からの続き',
       );
 
       expect(
-        find.byKey(Keys.replyBubble),
+        find.byKey(Keys.replyText),
         findsNothing,
-        reason: '思考の塊が届き始めたら返答の吹き出しは居なくなる',
+        reason: '返答の塊が 1 つも届いていないので返答の文字は出ない',
       );
       expect(
         find.byKey(Keys.waitingDots),
         findsNothing,
-        reason: '受信前にあった待機の点も居なくなる',
+        reason: '思考の塊が届き始めたら、受信前にあった待機の点は居なくなる',
       );
     },
   );
@@ -316,7 +322,9 @@ void main() {
       await tester.tap(find.byKey(Keys.thinkingFrameHead));
       await pumpUntil(
         tester,
-        () => (bodyHeight(tester) - thinkingTextHeight(tester)).abs() <= heightTolerance,
+        () =>
+            (bodyHeight(tester) - thinkingTextHeight(tester)).abs() <=
+            heightTolerance,
         maxFrames: maxFramesToHeight,
         reason: '本文の箱が思考の文と同じ高さ (全部) にならない',
         feeding: feed,
@@ -366,7 +374,8 @@ void main() {
       expect(
         controller.thinking.pendingCount,
         greaterThan(0),
-        reason: 'テストの前提: 返答が届く時点で思考にまだ未出現の残りがある '
+        reason:
+            'テストの前提: 返答が届く時点で思考にまだ未出現の残りがある '
             '(93 文字を 12 文字ずつ届けているので 2 秒時点では出し切っていない)。'
             'ここが崩れていたらテストの組み立ての問題',
       );
@@ -388,10 +397,13 @@ void main() {
         '$thinkingSeconds 秒考えました',
         reason: 'n は思考の最初の塊から返答の最初の塊までの秒数 (2 秒)',
       );
+      expect(find.byKey(Keys.replyText), findsOneWidget, reason: '返答の文字が現れる');
       expect(
-        find.byKey(Keys.replyBubble),
-        findsOneWidget,
-        reason: '返答の吹き出しが現れる',
+        tester.getTopLeft(find.byKey(Keys.replyText)).dy,
+        greaterThanOrEqualTo(
+          tester.getBottomLeft(find.byKey(Keys.thinkingFrame)).dy,
+        ),
+        reason: '返答の文字は思考の枠の下に直接置かれる (間に吹き出しは無い)',
       );
 
       await pumpUntil(
@@ -408,7 +420,9 @@ void main() {
         reason: '返答の可視文字列が増える',
       );
       expect(
-        replyText.startsWith(visibleText(tester, within: find.byKey(Keys.replyText))),
+        replyText.startsWith(
+          visibleText(tester, within: find.byKey(Keys.replyText)),
+        ),
         isTrue,
         reason: '見えているのは返答の先頭からの続き',
       );
@@ -479,7 +493,10 @@ void main() {
         reason: '前提: 思考の本文が畳まれない',
       );
       // 返答が出終わるまで進める。
-      await pumpFrames(tester, fastForwardBudget + fadeDuration + frameInterval * 4);
+      await pumpFrames(
+        tester,
+        fastForwardBudget + fadeDuration + frameInterval * 4,
+      );
 
       expect(controller.isComplete, isTrue, reason: '前提: 受信完了している');
 
@@ -510,96 +527,93 @@ void main() {
     },
   );
 
-  testWidgets(
-    'AC-19 思考の塊が 1 つも届かずに返答が始まると、思考の枠は出ず、吹き出しに返答の文字が流れる',
-    (tester) async {
-      final controller = StreamingReplyController();
-      await pumpStreamingReply(tester, controller);
+  testWidgets('AC-19 思考の塊が 1 つも届かずに返答が始まると、思考の枠は出ず、そのまま返答の文字が流れる', (
+    tester,
+  ) async {
+    final controller = StreamingReplyController();
+    await pumpStreamingReply(tester, controller);
 
-      controller.addChunk(const Chunk(replyText));
-      await tester.pump();
+    controller.addChunk(const Chunk(replyText));
+    await tester.pump();
 
-      expect(
-        find.byKey(Keys.thinkingFrame),
-        findsNothing,
-        reason: '思考の塊が 1 つも届いていないので思考の枠は出ない',
-      );
-      expect(find.byKey(Keys.replyBubble), findsOneWidget, reason: '返答の吹き出しが居る');
-      expect(
-        find.byKey(Keys.waitingDots),
-        findsNothing,
-        reason: '返答の最初の塊が届いたら待機の点は居なくなる',
-      );
+    expect(
+      find.byKey(Keys.thinkingFrame),
+      findsNothing,
+      reason: '思考の塊が 1 つも届いていないので思考の枠は出ない',
+    );
+    expect(find.byKey(Keys.replyText), findsOneWidget, reason: '返答の文字が居る');
+    expect(
+      find.byKey(Keys.waitingDots),
+      findsNothing,
+      reason: '返答の最初の塊が届いたら待機の点は居なくなる',
+    );
 
-      await pumpFrames(tester, revealInterval * 2);
-      final replyChars = revealedCharCount(tester, Keys.replyText);
-      expect(replyChars, greaterThan(0), reason: '返答の文字が吹き出しに出る');
+    await pumpFrames(tester, revealInterval * 2);
+    final replyChars = revealedCharCount(tester, Keys.replyText);
+    expect(replyChars, greaterThan(0), reason: '返答の文字が出る');
 
-      await pumpFrames(tester, revealInterval * 4);
-      expect(
-        revealedCharCount(tester, Keys.replyText),
-        greaterThan(replyChars),
-        reason: '畳みを待たずに返答が流れる',
-      );
-      expect(
-        replyText.startsWith(visibleText(tester, within: find.byKey(Keys.replyText))),
-        isTrue,
-        reason: '見えているのは返答の先頭からの続き',
-      );
-    },
-  );
+    await pumpFrames(tester, revealInterval * 4);
+    expect(
+      revealedCharCount(tester, Keys.replyText),
+      greaterThan(replyChars),
+      reason: '畳みを待たずに返答が流れる',
+    );
+    expect(
+      replyText.startsWith(
+        visibleText(tester, within: find.byKey(Keys.replyText)),
+      ),
+      isTrue,
+      reason: '見えているのは返答の先頭からの続き',
+    );
+  });
 
-  testWidgets(
-    'AC-21 思考だけ届いて受信完了すると、思考の残りを早送りして「2 秒考えました」に畳まれ、返答の吹き出しは出ない',
-    (tester) async {
-      final controller = StreamingReplyController();
-      await pumpStreamingReply(tester, controller);
-      final feed = _ThinkingFeed(controller, thinkingText);
+  testWidgets('AC-21 思考だけ届いて受信完了すると、思考の残りを早送りして「2 秒考えました」に畳まれ、返答の文字も待機の点も出ない', (
+    tester,
+  ) async {
+    final controller = StreamingReplyController();
+    await pumpStreamingReply(tester, controller);
+    final feed = _ThinkingFeed(controller, thinkingText);
 
-      // 思考の最初の塊から 125 フレーム (2 秒) 進めてから受信完了するので、n = 2。
-      await pumpFeeding(tester, feed, elapsedToReply);
-      while (feed.hasMore) {
-        feed.sendNext();
-      }
-      expect(
-        controller.thinking.pendingCount,
-        greaterThan(0),
-        reason: 'テストの前提: 受信完了の時点で思考にまだ未出現の残りがある '
-            '(93 文字を 12 文字ずつ届けているので 2 秒時点では出し切っていない)。'
-            'ここが崩れていたらテストの組み立ての問題',
-      );
+    // 思考の最初の塊から 125 フレーム (2 秒) 進めてから受信完了するので、n = 2。
+    await pumpFeeding(tester, feed, elapsedToReply);
+    while (feed.hasMore) {
+      feed.sendNext();
+    }
+    expect(
+      controller.thinking.pendingCount,
+      greaterThan(0),
+      reason:
+          'テストの前提: 受信完了の時点で思考にまだ未出現の残りがある '
+          '(93 文字を 12 文字ずつ届けているので 2 秒時点では出し切っていない)。'
+          'ここが崩れていたらテストの組み立ての問題',
+    );
 
-      controller.complete();
-      await tester.pump();
+    controller.complete();
+    await tester.pump();
 
-      await pumpUntil(
-        tester,
-        () => bodyHeight(tester) <= heightTolerance,
-        maxFrames: maxFramesToCollapse,
-        reason: '思考の本文が畳まれない (高さ 0 にならない)',
-      );
+    await pumpUntil(
+      tester,
+      () => bodyHeight(tester) <= heightTolerance,
+      maxFrames: maxFramesToCollapse,
+      reason: '思考の本文が畳まれない (高さ 0 にならない)',
+    );
 
-      expect(
-        headTitle(tester),
-        '$thinkingSeconds 秒考えました',
-        reason: 'n は思考の最初の塊から受信完了までの秒数 (2 秒)',
-      );
-      expect(
-        visibleText(tester, within: find.byKey(Keys.thinkingText)),
-        thinkingText,
-        reason: '受信完了で思考の残りを早送りして出し切る',
-      );
-      expect(
-        controller.thinking.pendingCount,
-        0,
-        reason: '早送りで未出現の残りが無くなる',
-      );
-      expect(
-        find.byKey(Keys.replyBubble),
-        findsNothing,
-        reason: '返答が 1 文字も届いていないので吹き出しは出ない',
-      );
-      expect(find.byKey(Keys.waitingDots), findsNothing);
-    },
-  );
+    expect(
+      headTitle(tester),
+      '$thinkingSeconds 秒考えました',
+      reason: 'n は思考の最初の塊から受信完了までの秒数 (2 秒)',
+    );
+    expect(
+      visibleText(tester, within: find.byKey(Keys.thinkingText)),
+      thinkingText,
+      reason: '受信完了で思考の残りを早送りして出し切る',
+    );
+    expect(controller.thinking.pendingCount, 0, reason: '早送りで未出現の残りが無くなる');
+    expect(
+      find.byKey(Keys.replyText),
+      findsNothing,
+      reason: '返答が 1 文字も届いていないので返答の文字は出ない',
+    );
+    expect(find.byKey(Keys.waitingDots), findsNothing);
+  });
 }

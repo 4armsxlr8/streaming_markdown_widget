@@ -1,32 +1,35 @@
 import 'package:flutter/widgets.dart';
 
-import 'reply_theme.dart';
+import 'markdown_block.dart';
+import 'streaming_reply_style.dart';
 
-/// 引用 (`> `) 1 つ。中身は段落など、他のブロック Widget をそのまま包む。
+/// One blockquote (`> `). Its content is other block widgets (paragraphs,
+/// etc.) wrapped as-is.
 class MarkdownBlockquote extends StatelessWidget {
-  const MarkdownBlockquote({super.key, required this.children});
+  const MarkdownBlockquote({super.key, required this.block});
 
-  /// 引用の中のブロック (通常は段落)。
-  final List<Widget> children;
+  /// This blockquote's content (kind is blockquote). Child blocks are already rendered.
+  final MarkdownBlock block;
 
   @override
   Widget build(BuildContext context) {
+    final style = StreamingReplyStyleScope.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 2).copyWith(
-        left: ReplyTheme.quoteIndent,
-      ),
-      decoration: const BoxDecoration(
+      padding: EdgeInsets.symmetric(
+        vertical: 2,
+      ).copyWith(left: style.quoteIndent),
+      decoration: BoxDecoration(
         border: Border(
           left: BorderSide(
-            color: ReplyTheme.quoteBorderColor,
-            width: ReplyTheme.quoteBorderWidth,
+            color: style.quoteBorderColor,
+            width: style.quoteBorderWidth,
           ),
         ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
-        children: children,
+        children: block.children!,
       ),
     );
   }

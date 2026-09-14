@@ -3,41 +3,57 @@ import 'package:flutter/widgets.dart';
 
 import 'streaming_reply_controller.dart';
 
-/// [ticker] を [wanted] に合わせて開始・停止する ([RevealTicker] と
-/// `revealed_markdown.dart` の両方の Ticker で共有する)。
+/// Starts or stops [ticker] to match [wanted], then tells [controller]
+/// whether frames are actually flowing (shared by both [RevealTicker] and the
+/// Ticker in `revealed_markdown.dart`).
 ///
-/// ガードは [Ticker.isActive] を見る ([Ticker.isTicking] ではない):
-/// `TickerMode` が無効・アプリが background のとき muted な Ticker は
-/// `isActive` のまま `isTicking` だけ false になるので、`isTicking` で
-/// ガードすると `start()` を 2 度呼んで例外になる。
-void syncTicker(Ticker ticker, {required bool wanted}) {
+/// The start/stop guard checks [Ticker.isActive] (not [Ticker.isTicking]):
+/// while `TickerMode` is disabled or the app is backgrounded, a muted Ticker
+/// stays `isActive` while `isTicking` alone goes false — guarding on
+/// `isTicking` would call `start()` twice and throw. [Ticker.isTicking] is
+/// exactly the fact [StreamingReplyController.framesPaused] needs, and must
+/// be read after the start/stop above — read first, the first arrival while
+/// placed on its own would resolve at [Duration.zero] and the whole text
+/// would become revealed all at once on the next frame.
+void syncTicker(
+  Ticker ticker,
+  StreamingReplyController controller, {
+  required bool wanted,
+}) {
   if (wanted) {
     if (!ticker.isActive) ticker.start();
   } else {
     if (ticker.isActive) ticker.stop();
   }
+  controller.framesPaused = !ticker.isTicking;
 }
 
-/// [StreamingReplyController.needsTicks] が true の間だけ Ticker を回し、
-/// フレームごとに [StreamingReplyController.tick] を呼ぶ Widget。
+/// A widget that runs a Ticker, calling [StreamingReplyController.tick] every
+/// frame, only while [StreamingReplyController.needsTicks] is true.
 ///
-/// 返答の Widget 全体 (思考の枠 + 返答の吹き出し) を 1 つだけ包む。
-/// [StreamingReplyController.tick] には
-/// [SchedulerBinding.currentFrameTimeStamp] (フレームの時刻そのもの) を
-/// そのまま渡す — Controller は tick 間の差分 (経過) しか使わず 0 始まりで
-/// ある必要が無いので、Widget 側で原点を引く必要は無い。
+/// Wraps the reply widget as a whole (thinking frame + reply bubble) exactly
+/// once. Passes [SchedulerBinding.currentFrameTimeStamp] (the frame's
+/// timestamp itself) straight through to [StreamingReplyController.tick] —
+/// the controller only uses the delta between ticks (elapsed time) and
+/// doesn't need it to start at zero, so the widget side has no origin to subtract.
 ///
-/// [StreamingReplyController.framesPaused] は、フレームが実際に流れている
-/// かどうかの事実を [Ticker] 自身に聞いて (`!_ticker.isTicking`) 立てる —
-/// `TickerMode` が無効な間や Ticker 自体が止まっている間、その間に届いた
-/// 塊・受信完了の時刻に依存する処理を Controller 側で繰り延べさせる。
+/// [StreamingReplyController.framesPaused] is set by asking the [Ticker]
+/// itself whether frames are actually flowing (`!_ticker.isTicking`) — while
+/// `TickerMode` is disabled or the Ticker itself is stopped, this makes the
+/// controller defer time-dependent processing for chunks and completion that
+/// arrive during that window.
 class RevealTicker extends StatefulWidget {
-  const RevealTicker({super.key, required this.controller, required this.child});
+  const RevealTicker({
+    super.key,
+    required this.controller,
+    required this.child,
+  });
 
-  /// 時計を進める対象。
+  /// The clock this ticker drives.
   final StreamingReplyController controller;
 
-  /// 思考の枠・返答の吹き出しなど、出現の対象になる Widget 全体。
+  /// The whole subtree subject to revealing — the thinking frame, reply
+  /// bubble, and so on.
   final Widget child;
 
   @override
@@ -84,10 +100,13 @@ class _RevealTickerState extends State<RevealTicker>
 
   void _onControllerChanged() => _syncTicker();
 
-  /// Controller が Ticker を必要としている間だけ回す。
+  /// Runs the ticker only while the controller still needs it.
   void _syncTicker() {
-    syncTicker(_ticker, wanted: widget.controller.needsTicks);
-    _updateFramesPaused();
+    syncTicker(
+      _ticker,
+      widget.controller,
+      wanted: widget.controller.needsTicks,
+    );
   }
 
   void _onTick(Duration elapsed) {

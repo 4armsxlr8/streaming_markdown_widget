@@ -28,8 +28,8 @@ void main() {
   /// 1 文字の不透明度が 0 から 1 になるまでの時間。
   const fadeDuration = Duration(milliseconds: 300);
 
-  /// 受信完了の時点の残りを出し切るまでの猶予 (早送り)。
-  const fastForwardBudget = Duration(milliseconds: 400);
+  /// 追いつき・早送りの最速の間隔 (1 フレームに 1 文字)。
+  const minRevealInterval = Duration(milliseconds: 16);
 
   /// 不透明度の比較に許す誤差。
   const opacityTolerance = 1e-6;
@@ -100,6 +100,18 @@ ListView.builder(
 詳しくは [公式ドキュメント](https://docs.flutter.dev/perf/best-practices) を参照してください。
 ''';
 
+  /// [fullReplyText] が受信完了から全部表示済みになるまで進める時間。
+  ///
+  /// 早送りの割り当て間隔は max(min(400ms ÷ 482 文字, 25ms), 16ms) = 16ms で
+  /// 頭打ちになるので (猶予の 400ms では出し切らない)、最後の文字が出現を
+  /// 始めるのは 481 × 16ms。そこから 300ms で不透明度 1 になる。Widget が
+  /// 出現開始を刻むのは「その文字が初めて描かれたフレーム」なので、フレームの
+  /// 刻み 8 つ分を余裕として足す。
+  final fullReplyRevealDuration =
+      minRevealInterval * (fullReplyText.characters.length - 1) +
+      fadeDuration +
+      frameInterval * 8;
+
   /// [fullReplyText] の太字の部分。
   const boldText = '画面に見えている行だけを組み立てる';
 
@@ -116,7 +128,17 @@ ListView.builder(
   /// 整形されたら可視文字列に残ってはいけない記号。
   ///
   /// 単独の `*` は斜体 (`*滑らかに*`) の記号で、`**` を兼ねる。
-  const rawMarkers = <String>['**', '*', '`', '##', '|', '---', '[', '](', '> '];
+  const rawMarkers = <String>[
+    '**',
+    '*',
+    '`',
+    '##',
+    '|',
+    '---',
+    '[',
+    '](',
+    '> ',
+  ];
 
   /// [spans] のうち表示済み (不透明度 1) のものの文字をつないだもの。
   String opaqueTextOf(List<RevealedSpan> spans) => spans
@@ -160,11 +182,7 @@ ListView.builder(
         firstChunkText,
         reason: '先に表示済みだった文字は不透明度 1 の span のまま、出現し直さない',
       );
-      expect(
-        revealing,
-        isNotEmpty,
-        reason: '前提: 新しく届いた文字が出現を始めている',
-      );
+      expect(revealing, isNotEmpty, reason: '前提: 新しく届いた文字が出現を始めている');
       expect(
         revealing.map((span) => span.text.length),
         everyElement(1),
@@ -179,108 +197,88 @@ ListView.builder(
     },
   );
 
-  testWidgets(
-    'AC-11 全記法を含む返答が受信完了すると、それぞれ対応する Widget と style で描かれ、記号は残らない',
-    (tester) async {
-      final controller = StreamingReplyController();
-      await pumpRevealedMarkdown(tester, controller);
+  testWidgets('AC-11 全記法を含む返答が受信完了すると、それぞれ対応する Widget と style で描かれ、記号は残らない', (
+    tester,
+  ) async {
+    final controller = StreamingReplyController();
+    await pumpRevealedMarkdown(tester, controller);
 
-      controller.addChunk(const Chunk(fullReplyText));
-      await tester.pump();
-      controller.complete();
-      await pumpFrames(
-        tester,
-        fastForwardBudget + fadeDuration + frameInterval * 4,
-      );
+    controller.addChunk(const Chunk(fullReplyText));
+    await tester.pump();
+    controller.complete();
+    await pumpFrames(tester, fullReplyRevealDuration);
 
-      // ブロックの記法がそれぞれの Widget になる。
-      expect(find.byType(MarkdownHeading), findsOneWidget);
-      expect(
-        tester.widget<MarkdownHeading>(find.byType(MarkdownHeading)).level,
-        2,
-        reason: '`##` は 2 段目の見出し',
-      );
-      expect(find.byType(MarkdownParagraph), findsWidgets);
-      final lists = tester
-          .widgetList<MarkdownList>(find.byType(MarkdownList))
-          .toList();
-      expect(
-        lists.where((list) => !list.ordered),
-        hasLength(1),
-        reason: '箇条書き (`- `) が 1 つ',
-      );
-      expect(
-        lists.where((list) => list.ordered),
-        hasLength(1),
-        reason: '番号リスト (`1. `) が 1 つ',
-      );
-      expect(find.byType(MarkdownBlockquote), findsOneWidget);
-      expect(find.byType(MarkdownCodeBlock), findsOneWidget);
-      expect(find.byType(MarkdownTable), findsOneWidget);
+    // ブロックの記法がそれぞれの Widget になる。
+    expect(find.byType(MarkdownHeading), findsOneWidget);
+    expect(
+      tester.widget<MarkdownHeading>(find.byType(MarkdownHeading)).level,
+      2,
+      reason: '`##` は 2 段目の見出し',
+    );
+    expect(find.byType(MarkdownParagraph), findsWidgets);
+    final lists = tester
+        .widgetList<MarkdownList>(find.byType(MarkdownList))
+        .toList();
+    expect(
+      lists.where((list) => !list.ordered),
+      hasLength(1),
+      reason: '箇条書き (`- `) が 1 つ',
+    );
+    expect(
+      lists.where((list) => list.ordered),
+      hasLength(1),
+      reason: '番号リスト (`1. `) が 1 つ',
+    );
+    expect(find.byType(MarkdownBlockquote), findsOneWidget);
+    expect(find.byType(MarkdownCodeBlock), findsOneWidget);
+    expect(find.byType(MarkdownTable), findsOneWidget);
 
-      // インラインの記法が契約どおりの style になる。
-      final spans = revealedSpans(tester);
-      RevealedSpan spanOf(String text) {
-        final matched = spans.where((span) => span.text == text).toList();
-        expect(
-          matched,
-          hasLength(1),
-          reason: '「$text」は表示済みなので 1 つの span にまとまる',
-        );
-        return matched.single;
-      }
+    // インラインの記法が契約どおりの style になる。
+    final spans = revealedSpans(tester);
+    RevealedSpan spanOf(String text) {
+      final matched = spans.where((span) => span.text == text).toList();
+      expect(matched, hasLength(1), reason: '「$text」は表示済みなので 1 つの span にまとまる');
+      return matched.single;
+    }
 
-      expect(
-        spanOf(boldText).style?.fontWeight?.value,
-        greaterThanOrEqualTo(FontWeight.w600.value),
-        reason: '太字',
-      );
-      expect(
-        spanOf(italicText).style?.fontStyle,
-        FontStyle.italic,
-        reason: '斜体',
-      );
-      final inlineCodeSpan = spanOf(inlineCodeText);
-      expect(
-        inlineCodeSpan.style?.backgroundColor,
-        isNotNull,
-        reason: 'インラインコードは地の色を持つ',
-      );
-      expect(
-        inlineCodeSpan.style?.fontFamily,
-        isNotNull,
-        reason: 'インラインコードは段落と違う字体',
-      );
-      final linkSpan = spanOf(linkLabelText);
-      expect(
-        linkSpan.style?.decoration?.contains(TextDecoration.underline),
-        isTrue,
-        reason: 'リンクは下線',
-      );
-      expect(
-        linkSpan.recognizer,
-        isNull,
-        reason: 'リンクにタップ処理を付けない',
-      );
+    expect(
+      spanOf(boldText).style?.fontWeight?.value,
+      greaterThanOrEqualTo(FontWeight.w600.value),
+      reason: '太字',
+    );
+    expect(spanOf(italicText).style?.fontStyle, FontStyle.italic, reason: '斜体');
+    final inlineCodeSpan = spanOf(inlineCodeText);
+    expect(
+      inlineCodeSpan.style?.backgroundColor,
+      isNotNull,
+      reason: 'インラインコードは地の色を持つ',
+    );
+    expect(
+      inlineCodeSpan.style?.fontFamily,
+      isNotNull,
+      reason: 'インラインコードは段落と違う字体',
+    );
+    final linkSpan = spanOf(linkLabelText);
+    expect(
+      linkSpan.style?.decoration?.contains(TextDecoration.underline),
+      isTrue,
+      reason: 'リンクは下線',
+    );
+    expect(linkSpan.recognizer, isNull, reason: 'リンクにタップ処理を付けない');
 
-      // 記号は残らず、コードブロックの中身は素の文字のまま残る。
-      final text = visibleText(tester);
-      expect(
-        text,
-        contains('リストを滑らかにスクロールさせるには'),
-        reason: '前提: 返答の文字が描かれている',
-      );
-      for (final marker in rawMarkers) {
-        expect(text, isNot(contains(marker)), reason: '生の $marker が残らない');
-      }
-      final codeBlockText = visibleText(
-        tester,
-        within: find.byType(MarkdownCodeBlock),
-      );
-      expect(codeBlockText, contains('ListView.builder('));
-      expect(codeBlockText, contains('itemExtent: 72,'));
-    },
-  );
+    // 記号は残らず、コードブロックの中身は素の文字のまま残る。
+    final text = visibleText(tester);
+    expect(text, contains('リストを滑らかにスクロールさせるには'), reason: '前提: 返答の文字が描かれている');
+    for (final marker in rawMarkers) {
+      expect(text, isNot(contains(marker)), reason: '生の $marker が残らない');
+    }
+    final codeBlockText = visibleText(
+      tester,
+      within: find.byType(MarkdownCodeBlock),
+    );
+    expect(codeBlockText, contains('ListView.builder('));
+    expect(codeBlockText, contains('itemExtent: 72,'));
+  });
 
   testWidgets(
     'AC-22 区切り行が届いて表が初めて描かれたフレームで、見出し行の文字が一斉に不透明度 0 付近から出現を始め、300ms 後に 1 になる',
@@ -303,11 +301,7 @@ ListView.builder(
         reason: '区切り行が届くまで表は描かれない',
       );
       final beforeText = visibleText(tester);
-      expect(
-        beforeText,
-        isNot(contains('方法')),
-        reason: '描かれていない見出し行の文字は見えない',
-      );
+      expect(beforeText, isNot(contains('方法')), reason: '描かれていない見出し行の文字は見えない');
       expect(beforeText, isNot(contains('|')), reason: '生の | は見えない');
 
       controller.addChunk(const Chunk(tableDelimiterChunk));

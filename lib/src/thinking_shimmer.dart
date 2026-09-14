@@ -2,13 +2,14 @@ import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/widgets.dart';
 
-import 'reply_theme.dart';
+import 'streaming_reply_style.dart';
 
-/// 思考の枠の見出し行「考え中…」の文字の上を、1.6 秒周期で左から右へ流れる光。
+/// A light that sweeps left to right, on a 1.6-second cycle, across the
+/// thinking frame's headline text ("Thinking…").
 ///
-/// mock.html の `.demo-shimmer` (`background-clip: text` のグラデーションを
-/// `background-position` で流す) を [ShaderMask] で写す。光の流れ方・色そのものは
-/// spec が「テストしないと決めたもの」。
+/// Mirrors mock.html's `.demo-shimmer` (a `background-clip: text` gradient
+/// animated via `background-position`) with a [ShaderMask]. The light's
+/// motion and color are among the things spec decided not to test.
 class ThinkingShimmer extends StatefulWidget {
   const ThinkingShimmer({
     super.key,
@@ -17,7 +18,7 @@ class ThinkingShimmer extends StatefulWidget {
     required this.style,
   });
 
-  /// 光の下の文字に付けるキー (呼び出し元が Keys.thinkingFrameTitle を渡す)。
+  /// Key attached to the text under the light (the caller passes Keys.thinkingFrameTitle).
   final Key textKey;
 
   final String text;
@@ -28,14 +29,24 @@ class ThinkingShimmer extends StatefulWidget {
   State<ThinkingShimmer> createState() => _ThinkingShimmerState();
 }
 
-class _ThinkingShimmerState extends State<ThinkingShimmer> with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
+class _ThinkingShimmerState extends State<ThinkingShimmer>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(vsync: this);
+  bool _started = false;
 
+  // `StreamingReplyStyleScope.of` (an InheritedWidget lookup) is not safe to
+  // call from initState, so the duration is set here instead — this runs
+  // once, right after initState and before the first build.
   @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(vsync: this, duration: ReplyTheme.thinkingShimmerDuration)
-      ..repeat();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _controller.duration = StreamingReplyStyleScope.of(
+      context,
+    ).thinkingShimmerDuration;
+    if (!_started) {
+      _started = true;
+      _controller.repeat();
+    }
   }
 
   @override
@@ -46,12 +57,14 @@ class _ThinkingShimmerState extends State<ThinkingShimmer> with SingleTickerProv
 
   @override
   Widget build(BuildContext context) {
+    final style = StreamingReplyStyleScope.of(context);
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
         return ShaderMask(
           blendMode: BlendMode.srcIn,
-          shaderCallback: (bounds) => _gradientAt(_controller.value).createShader(bounds),
+          shaderCallback: (bounds) =>
+              _gradientAt(_controller.value, style).createShader(bounds),
           child: child,
         );
       },
@@ -60,19 +73,19 @@ class _ThinkingShimmerState extends State<ThinkingShimmer> with SingleTickerProv
   }
 }
 
-/// [t] (0〜1、1 周で 1.6 秒) に応じて左から右へ流れるグラデーション。
-LinearGradient _gradientAt(double t) {
+/// The gradient sweeping left to right at [t] (0–1, one cycle = 1.6 seconds).
+LinearGradient _gradientAt(double t, StreamingReplyStyle style) {
   final dx = lerpDouble(-1.5, 1.5, t)!;
   return LinearGradient(
     begin: Alignment(dx - 1, 0),
     end: Alignment(dx + 1, 0),
     stops: const [0, 0.38, 0.5, 0.62, 1],
-    colors: const [
-      ReplyTheme.thinkingShimmerBaseColor,
-      ReplyTheme.thinkingShimmerBaseColor,
-      ReplyTheme.thinkingShimmerHighlightColor,
-      ReplyTheme.thinkingShimmerBaseColor,
-      ReplyTheme.thinkingShimmerBaseColor,
+    colors: [
+      style.thinkingShimmerBaseColor,
+      style.thinkingShimmerBaseColor,
+      style.thinkingShimmerHighlightColor,
+      style.thinkingShimmerBaseColor,
+      style.thinkingShimmerBaseColor,
     ],
   );
 }

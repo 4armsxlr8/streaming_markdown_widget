@@ -100,7 +100,9 @@ void _collectSpans(
   if (span is! TextSpan) return;
   final style = inheritedStyle == null
       ? span.style
-      : (span.style == null ? inheritedStyle : inheritedStyle.merge(span.style));
+      : (span.style == null
+            ? inheritedStyle
+            : inheritedStyle.merge(span.style));
   final recognizer = span.recognizer ?? inheritedRecognizer;
   final text = span.text;
   if (text != null && text.isNotEmpty) {

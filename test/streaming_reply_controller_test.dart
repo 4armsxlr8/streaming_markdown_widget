@@ -28,6 +28,9 @@ void main() {
   /// 受信完了の時点の残りを出し切るまでの猶予 (早送り)。
   const fastForwardBudget = Duration(milliseconds: 400);
 
+  /// 追いつき・早送りの最速の間隔 (1 フレームに 1 文字)。
+  const minRevealInterval = Duration(milliseconds: 16);
+
   /// 思考の本文を畳むのにかかる時間。
   const collapseDuration = Duration(milliseconds: 300);
 
@@ -55,67 +58,65 @@ void main() {
   List<int> revealingIndexes(RevealSection section) =>
       section.revealing.map((revealingChar) => revealingChar.index).toList();
 
-  test('AC-2 4 文字の塊が 1 つ届くと、25ms ごとに 1 文字ずつ出現を始め、各文字は出現開始から 300ms で表示済みになる', () {
-    final controller = StreamingReplyController();
-    controller.addChunk(const Chunk('画面表示'));
+  test(
+    'AC-2 4 文字の塊が 1 つ届くと、25ms ごとに 1 文字ずつ出現を始め、各文字は出現開始から 300ms で表示済みになる',
+    () {
+      final controller = StreamingReplyController();
+      controller.addChunk(const Chunk('画面表示'));
 
-    controller.tick(Duration.zero);
-    expect(controller.reply.receivedCount, 4);
-    expect(
-      controller.reply.startedCount,
-      1,
-      reason: '最初の文字は塊の到着時刻に出現を始める',
-    );
-    expect(controller.reply.displayedCount, 0, reason: '届いた瞬間には文字が見えない');
-    expect(controller.reply.revealing.single.index, 0);
-    expect(controller.reply.revealing.single.char, '画');
-    expect(controller.reply.revealing.single.opacity, closeTo(0, opacityTolerance));
+      controller.tick(Duration.zero);
+      expect(controller.reply.receivedCount, 4);
+      expect(controller.reply.startedCount, 1, reason: '最初の文字は塊の到着時刻に出現を始める');
+      expect(controller.reply.displayedCount, 0, reason: '届いた瞬間には文字が見えない');
+      expect(controller.reply.revealing.single.index, 0);
+      expect(controller.reply.revealing.single.char, '画');
+      expect(
+        controller.reply.revealing.single.opacity,
+        closeTo(0, opacityTolerance),
+      );
 
-    controller.tick(revealInterval);
-    expect(controller.reply.startedCount, 2);
-    controller.tick(revealInterval * 2);
-    expect(controller.reply.startedCount, 3);
-    controller.tick(revealInterval * 3);
-    expect(
-      controller.reply.startedCount,
-      4,
-      reason: '4 文字目は 75ms 後に出現を始める',
-    );
+      controller.tick(revealInterval);
+      expect(controller.reply.startedCount, 2);
+      controller.tick(revealInterval * 2);
+      expect(controller.reply.startedCount, 3);
+      controller.tick(revealInterval * 3);
+      expect(controller.reply.startedCount, 4, reason: '4 文字目は 75ms 後に出現を始める');
 
-    // 不透明度は「その文字の出現開始からの経過 ÷ 300ms」。
-    controller.tick(const Duration(milliseconds: 150));
-    expect(
-      opacityOf(controller.reply, 0),
-      closeTo(0.5, opacityTolerance),
-      reason: '1 文字目は 0ms に始まったので (150 - 0) ÷ 300',
-    );
-    expect(
-      opacityOf(controller.reply, 3),
-      closeTo(0.25, opacityTolerance),
-      reason: '4 文字目は 75ms に始まったので (150 - 75) ÷ 300',
-    );
+      // 不透明度は「その文字の出現開始からの経過 ÷ 300ms」。
+      controller.tick(const Duration(milliseconds: 150));
+      expect(
+        opacityOf(controller.reply, 0),
+        closeTo(0.5, opacityTolerance),
+        reason: '1 文字目は 0ms に始まったので (150 - 0) ÷ 300',
+      );
+      expect(
+        opacityOf(controller.reply, 3),
+        closeTo(0.25, opacityTolerance),
+        reason: '4 文字目は 75ms に始まったので (150 - 75) ÷ 300',
+      );
 
-    controller.tick(fadeDuration);
-    expect(
-      controller.reply.displayedCount,
-      1,
-      reason: '1 文字目は 0ms + 300ms で不透明度 1 に達する',
-    );
-    expect(
-      revealingIndexes(controller.reply),
-      orderedEquals(<int>[1, 2, 3]),
-      reason: '表示済みに移った文字は出現中から外れる',
-    );
+      controller.tick(fadeDuration);
+      expect(
+        controller.reply.displayedCount,
+        1,
+        reason: '1 文字目は 0ms + 300ms で不透明度 1 に達する',
+      );
+      expect(
+        revealingIndexes(controller.reply),
+        orderedEquals(<int>[1, 2, 3]),
+        reason: '表示済みに移った文字は出現中から外れる',
+      );
 
-    controller.tick(fadeDuration + revealInterval);
-    expect(controller.reply.displayedCount, 2);
-    controller.tick(fadeDuration + revealInterval * 2);
-    expect(controller.reply.displayedCount, 3);
-    controller.tick(fadeDuration + revealInterval * 3);
-    expect(controller.reply.displayedCount, 4);
-    expect(controller.reply.revealing, isEmpty);
-    expect(controller.reply.revealedText, '画面表示');
-  });
+      controller.tick(fadeDuration + revealInterval);
+      expect(controller.reply.displayedCount, 2);
+      controller.tick(fadeDuration + revealInterval * 2);
+      expect(controller.reply.displayedCount, 3);
+      controller.tick(fadeDuration + revealInterval * 3);
+      expect(controller.reply.displayedCount, 4);
+      expect(controller.reply.revealing, isEmpty);
+      expect(controller.reply.revealedText, '画面表示');
+    },
+  );
 
   test('AC-3 塊が届かないまま時間が経つと、未出現の文字が無くなった時点で表示が止まる', () {
     final controller = StreamingReplyController();
@@ -144,55 +145,86 @@ void main() {
         isEmpty,
         reason: '$now: 不透明度が変わり続ける文字が出てこない',
       );
-      expect(controller.reply.revealedText, revealedText, reason: '$now: 表示が動かない');
+      expect(
+        controller.reply.revealedText,
+        revealedText,
+        reason: '$now: 表示が動かない',
+      );
       expect(controller.needsTicks, isFalse, reason: '$now: Ticker は回さないまま');
     }
   });
 
-  test('AC-4 100 文字の塊が一度に届くと、600ms 以内に未出現の残りが 24 文字以下になり、その後は基準の 25ms 間隔に戻る', () {
-    /// 100 文字の塊。10 文字の並びを 10 回。
-    final longChunkText = 'あいうえおかきくけこ' * 10;
-    expect(longChunkText.length, 100, reason: '前提: 塊は 100 文字');
+  test(
+    'AC-4 100 文字の塊が一度に届くと、追いつきは最速の 16ms 間隔まで縮んで止まり (600ms では残りが 24 文字以下に戻らない)、先頭 76 文字を出し切った後は基準の 25ms 間隔に戻る',
+    () {
+      /// 100 文字の塊。10 文字の並びを 10 回。
+      final longChunkText = 'あいうえおかきくけこ' * 10;
+      expect(longChunkText.length, 100, reason: '前提: 塊は 100 文字');
 
-    final controller = StreamingReplyController();
-    controller.addChunk(Chunk(longChunkText));
+      final controller = StreamingReplyController();
+      controller.addChunk(Chunk(longChunkText));
 
-    // 追いつきの猶予 (600ms) まで細かく進めて、残りが上限以下へ戻った時刻を拾う。
-    final catchUpFrames = catchUpBudget.inMilliseconds ~/ frameInterval.inMilliseconds;
-    Duration? settledAt;
-    for (var frame = 0; frame <= catchUpFrames; frame++) {
-      final now = frameInterval * frame;
-      controller.tick(now);
-      if (settledAt == null && controller.reply.pendingCount <= catchUpThreshold) {
-        settledAt = now;
+      // 追いつきの割り当て間隔 = max(600ms ÷ 100 文字, 16ms) = 16ms。
+      // 先頭 76 文字 (= 100 − 24) を 16ms 間隔で 0ms〜1200ms、
+      // 残り 24 文字を基準の 25ms 間隔で 1225ms〜1800ms。
+      final catchUpFrames =
+          catchUpBudget.inMilliseconds ~/ frameInterval.inMilliseconds;
+      for (var frame = 0; frame <= catchUpFrames; frame++) {
+        controller.tick(frameInterval * frame);
       }
-    }
-    expect(
-      settledAt,
-      isNotNull,
-      reason:
-          '追いつき: 届いてから 600ms 以内に未出現の残りが $catchUpThreshold 文字以下へ戻る '
-          '(基準の速さのままなら 600ms 時点の残りは 75 文字)',
-    );
+      expect(
+        controller.reply.startedCount,
+        38,
+        reason:
+            '追いつき: 基準の 25ms より速い 16ms 間隔で出す '
+            '(600ms までに 38 文字 = 0ms〜592ms。基準の速さのままなら 25 文字)',
+      );
+      expect(
+        controller.reply.pendingCount,
+        greaterThan(catchUpThreshold),
+        reason:
+            '最速の間隔で止まるので、600ms では遅れが上限 $catchUpThreshold 文字以下へは戻らない '
+            '(残りは 62 文字。遅れは上限を超えて溜まってよい)',
+      );
 
-    // 基準へ戻ったあとの 250ms は 25ms 間隔ちょうど = 10 文字。
-    final startedAtBudget = controller.reply.startedCount;
-    final windowFrames = (revealInterval * 10).inMilliseconds ~/ frameInterval.inMilliseconds;
-    for (var frame = catchUpFrames + 1; frame <= catchUpFrames + windowFrames; frame++) {
-      controller.tick(frameInterval * frame);
-    }
-    expect(
-      controller.reply.startedCount - startedAtBudget,
-      10,
-      reason: '600ms から 250ms の間に出現を始めるのは 25ms 間隔の 10 文字だけ '
-          '(追いつきの速さを保ったままなら 41 文字)',
-    );
-    expect(
-      controller.reply.pendingCount,
-      greaterThan(0),
-      reason: '前提: この時点ではまだ未出現の残りがある (窓の中で出し切っていない)',
-    );
-  });
+      // 追いつきの 76 文字を出し切った直後 (1210ms) からの 250ms は
+      // 25ms 間隔ちょうど = 10 文字。
+      const catchUpTailEnd = Duration(milliseconds: 1210);
+      final tailEndFrames =
+          catchUpTailEnd.inMilliseconds ~/ frameInterval.inMilliseconds;
+      for (var frame = catchUpFrames + 1; frame <= tailEndFrames; frame++) {
+        controller.tick(frameInterval * frame);
+      }
+      expect(
+        controller.reply.startedCount,
+        76,
+        reason: '前提: 1210ms までに 16ms 間隔の先頭 76 文字が出現を始めている',
+      );
+
+      final startedAtTailEnd = controller.reply.startedCount;
+      final windowFrames =
+          (revealInterval * 10).inMilliseconds ~/ frameInterval.inMilliseconds;
+      for (
+        var frame = tailEndFrames + 1;
+        frame <= tailEndFrames + windowFrames;
+        frame++
+      ) {
+        controller.tick(frameInterval * frame);
+      }
+      expect(
+        controller.reply.startedCount - startedAtTailEnd,
+        10,
+        reason:
+            '1210ms から 250ms の間に出現を始めるのは 25ms 間隔の 10 文字だけ '
+            '(最速の 16ms 間隔を保ったままなら 16 文字)',
+      );
+      expect(
+        controller.reply.pendingCount,
+        greaterThan(0),
+        reason: '前提: この時点ではまだ未出現の残りがある (窓の中で出し切っていない)',
+      );
+    },
+  );
 
   test('AC-5 残り 20 文字が未出現のまま受信完了すると、400ms 以内に 20 文字すべてが出現を始める', () {
     /// 24 文字の塊。遅れの上限ちょうどなので追いつきには入らず基準の速さで流れる。
@@ -225,7 +257,8 @@ void main() {
     expect(
       controller.reply.startedCount,
       24,
-      reason: '受信完了から 400ms 以内に 20 文字すべてが出現を始める '
+      reason:
+          '受信完了から 400ms 以内に 20 文字すべてが出現を始める '
           '(基準の速さのままなら 24 文字目は 575ms)',
     );
     expect(controller.reply.pendingCount, 0);
@@ -279,11 +312,7 @@ void main() {
     controller.tick(Duration.zero);
     expect(controller.reply.startedCount, 1);
     controller.tick(revealInterval);
-    expect(
-      controller.reply.startedCount,
-      2,
-      reason: '空の塊は 1 文字分の順番を消費しない',
-    );
+    expect(controller.reply.startedCount, 2, reason: '空の塊は 1 文字分の順番を消費しない');
     expect(controller.reply.revealedText, 'あい');
   });
 
@@ -338,105 +367,120 @@ void main() {
     expect(controller.reply.revealedText, 'あ$emoji');
   });
 
-  test('AC-20 思考に未出現の残り 30 文字がある時点で返答の最初の塊が届くと、思考を 400ms 以内に出し切って畳み、その 300ms 後に返答が流れ始める', () {
-    /// 思考の文 30 文字。10 文字の並びを 3 回。
-    final thinkingText = 'あいうえおかきくけこ' * 3;
-    expect(thinkingText.length, 30, reason: '前提: 思考の残りは 30 文字');
+  test(
+    'AC-20 思考に未出現の残り 30 文字がある時点で返答の最初の塊が届くと、思考を最速の 16ms 間隔 (464ms) で出し切って畳み、その 300ms 後に返答が流れ始める',
+    () {
+      /// 思考の文 30 文字。10 文字の並びを 3 回。
+      final thinkingText = 'あいうえおかきくけこ' * 3;
+      expect(thinkingText.length, 30, reason: '前提: 思考の残りは 30 文字');
 
-    final controller = StreamingReplyController();
-    // どちらも最初の tick より前に届くので、返答の到着時点で思考は 1 文字も
-    // 出現を始めておらず、未出現の残りがちょうど 30 文字になる。
-    controller.addChunk(Chunk(thinkingText, kind: ChunkKind.thinking));
-    controller.addChunk(const Chunk('画面表示'));
+      /// 思考の 30 文字を出し切るのにかかる時間。
+      ///
+      /// 早送りの割り当て間隔 = max(min(400ms ÷ 30 文字, 25ms), 16ms) = 16ms
+      /// (400 ÷ 30 = 13.3ms は最速の間隔を下回るので 16ms で止まる)。
+      /// 最後の文字は 29 × 16ms = 464ms に出現を始める。
+      final thinkingFastForwardEnd = minRevealInterval * 29;
 
-    // 思考が流れている間の観測。
-    const beforeCollapse = Duration(milliseconds: 200);
-    final beforeCollapseFrames =
-        beforeCollapse.inMilliseconds ~/ frameInterval.inMilliseconds;
-    for (var frame = 0; frame <= beforeCollapseFrames; frame++) {
-      controller.tick(frameInterval * frame);
-    }
-    expect(
-      controller.thinking.startedCount,
-      greaterThan(0),
-      reason: '前提: 思考が流れ始めている',
-    );
-    expect(
-      controller.thinkingFrame,
-      isNot(ThinkingFrameState.collapsed),
-      reason: '思考を出し切る前は畳まれない',
-    );
-    expect(controller.isThinking, isTrue, reason: '思考の時計が動いている');
-    expect(
-      controller.reply.receivedCount,
-      4,
-      reason: '返答の塊は畳む前も受信され、溜められる',
-    );
-    expect(
-      controller.reply.startedCount,
-      0,
-      reason: '畳む前に返答の文字は出現しない (思考と返答は同時に流れない)',
-    );
+      final controller = StreamingReplyController();
+      // どちらも最初の tick より前に届くので、返答の到着時点で思考は 1 文字も
+      // 出現を始めておらず、未出現の残りがちょうど 30 文字になる。
+      controller.addChunk(Chunk(thinkingText, kind: ChunkKind.thinking));
+      controller.addChunk(const Chunk('画面表示'));
 
-    // 思考を出し切った時刻・畳みが始まった時刻・返答が流れ始めた時刻を拾う。
-    Duration? thinkingAllStartedAt;
-    Duration? collapsedAt;
-    Duration? replyStartedAt;
-    for (var frame = beforeCollapseFrames + 1; frame <= 120; frame++) {
-      final now = frameInterval * frame;
-      controller.tick(now);
-      if (thinkingAllStartedAt == null &&
-          controller.thinking.startedCount == thinkingText.length) {
-        thinkingAllStartedAt = now;
+      // 思考が流れている間の観測。
+      const beforeCollapse = Duration(milliseconds: 200);
+      final beforeCollapseFrames =
+          beforeCollapse.inMilliseconds ~/ frameInterval.inMilliseconds;
+      for (var frame = 0; frame <= beforeCollapseFrames; frame++) {
+        controller.tick(frameInterval * frame);
       }
-      if (collapsedAt == null &&
-          controller.thinkingFrame == ThinkingFrameState.collapsed) {
-        collapsedAt = now;
+      expect(
+        controller.thinking.startedCount,
+        greaterThan(0),
+        reason: '前提: 思考が流れ始めている',
+      );
+      expect(
+        controller.thinkingFrame,
+        isNot(ThinkingFrameState.collapsed),
+        reason: '思考を出し切る前は畳まれない',
+      );
+      expect(controller.isThinking, isTrue, reason: '思考の時計が動いている');
+      expect(controller.reply.receivedCount, 4, reason: '返答の塊は畳む前も受信され、溜められる');
+      expect(
+        controller.reply.startedCount,
+        0,
+        reason: '畳む前に返答の文字は出現しない (思考と返答は同時に流れない)',
+      );
+
+      // 思考を出し切った時刻・畳みが始まった時刻・返答が流れ始めた時刻を拾う。
+      Duration? thinkingAllStartedAt;
+      Duration? collapsedAt;
+      Duration? replyStartedAt;
+      for (var frame = beforeCollapseFrames + 1; frame <= 120; frame++) {
+        final now = frameInterval * frame;
+        controller.tick(now);
+        if (thinkingAllStartedAt == null &&
+            controller.thinking.startedCount == thinkingText.length) {
+          thinkingAllStartedAt = now;
+        }
+        if (collapsedAt == null &&
+            controller.thinkingFrame == ThinkingFrameState.collapsed) {
+          collapsedAt = now;
+        }
+        if (replyStartedAt == null && controller.reply.startedCount > 0) {
+          replyStartedAt = now;
+        }
       }
-      if (replyStartedAt == null && controller.reply.startedCount > 0) {
-        replyStartedAt = now;
-      }
-    }
 
-    expect(
-      thinkingAllStartedAt,
-      isNotNull,
-      reason: '早送り: 返答の最初の塊が届いてから 400ms 以内に思考の 30 文字すべてが出現を始める',
-    );
-    expect(collapsedAt, isNotNull, reason: '思考を出し切ったら本文を畳む');
-    expect(replyStartedAt, isNotNull, reason: '畳んだあとに返答が流れ始める');
-    final allStartedAt = thinkingAllStartedAt!;
-    final collapseStartedAt = collapsedAt!;
-    final replyStarted = replyStartedAt!;
+      expect(
+        thinkingAllStartedAt,
+        isNotNull,
+        reason: '早送り: 返答の最初の塊が届いてから 464ms 以内に思考の 30 文字すべてが出現を始める',
+      );
+      expect(collapsedAt, isNotNull, reason: '思考を出し切ったら本文を畳む');
+      expect(replyStartedAt, isNotNull, reason: '畳んだあとに返答が流れ始める');
+      final allStartedAt = thinkingAllStartedAt!;
+      final collapseStartedAt = collapsedAt!;
+      final replyStarted = replyStartedAt!;
 
-    expect(
-      allStartedAt,
-      lessThanOrEqualTo(fastForwardBudget),
-      reason: '早送りの猶予は 400ms (基準の速さのままなら 30 文字目は 725ms)',
-    );
-    expect(
-      collapseStartedAt,
-      greaterThanOrEqualTo(allStartedAt),
-      reason: '畳むのは思考が出現を始めたあと (残りが読めないまま消えない)',
-    );
-    expect(
-      collapseStartedAt,
-      lessThanOrEqualTo(fastForwardBudget + frameInterval),
-      reason: '早送りの猶予 400ms + 観測の刻み 1 つ分',
-    );
-    expect(
-      replyStarted - collapseStartedAt,
-      greaterThanOrEqualTo(collapseDuration - frameInterval * 2),
-      reason: '畳みの 300ms が終わるまで返答の時計は進まない',
-    );
-    expect(
-      replyStarted - collapseStartedAt,
-      lessThanOrEqualTo(collapseDuration + frameInterval * 2),
-      reason: '畳み終わったらすぐ返答が流れ始める',
-    );
+      expect(
+        allStartedAt,
+        greaterThanOrEqualTo(thinkingFastForwardEnd),
+        reason:
+            '早送りは最速の 16ms 間隔で止まるので、猶予の 400ms では出し切れない '
+            '(上限が無ければ 400 ÷ 30 = 13.3ms 間隔で 387ms に出し切ってしまう)',
+      );
+      expect(
+        allStartedAt,
+        lessThanOrEqualTo(thinkingFastForwardEnd + frameInterval),
+        reason:
+            '30 文字目は 29 × 16ms = 464ms に出現を始める (観測の刻み 1 つ分の余裕つき。'
+            '基準の 25ms 間隔のままなら 725ms)',
+      );
+      expect(
+        collapseStartedAt,
+        greaterThanOrEqualTo(allStartedAt),
+        reason: '畳むのは思考が出現を始めたあと (残りが読めないまま消えない)',
+      );
+      expect(
+        collapseStartedAt,
+        lessThanOrEqualTo(thinkingFastForwardEnd + frameInterval),
+        reason: '早送りで出し切る 464ms + 観測の刻み 1 つ分',
+      );
+      expect(
+        replyStarted - collapseStartedAt,
+        greaterThanOrEqualTo(collapseDuration - frameInterval * 2),
+        reason: '畳みの 300ms が終わるまで返答の時計は進まない',
+      );
+      expect(
+        replyStarted - collapseStartedAt,
+        lessThanOrEqualTo(collapseDuration + frameInterval * 2),
+        reason: '畳み終わったらすぐ返答が流れ始める',
+      );
 
-    expect(controller.thinkingFrame, ThinkingFrameState.collapsed);
-    expect(controller.isThinking, isFalse, reason: '畳みが始まったら思考の時計は止まる');
-    expect(controller.thinking.pendingCount, 0);
-  });
+      expect(controller.thinkingFrame, ThinkingFrameState.collapsed);
+      expect(controller.isThinking, isFalse, reason: '畳みが始まったら思考の時計は止まる');
+      expect(controller.thinking.pendingCount, 0);
+    },
+  );
 }

@@ -1,74 +1,86 @@
 import 'package:flutter/widgets.dart';
 
 import 'keys.dart';
-import 'reply_theme.dart';
 import 'reveal_ticker.dart';
 import 'revealed_markdown.dart';
 import 'streaming_reply_controller.dart';
+import 'streaming_reply_style.dart';
 import 'thinking_frame.dart';
 import 'waiting_dots.dart';
 
-/// 返答の Widget: 思考の枠 + 返答の吹き出し。
+/// The reply widget: thinking frame + reply bubble.
 ///
-/// [RevealTicker] で包み、[StreamingReplyController] を直に listen して縦に並べる
-/// ([ThinkingFrame] の上に返答の吹き出し)。受信前は白い角丸の吹き出しに待機の点
-/// 3 つ ([WaitingDots])。思考の塊が届き始めたら吹き出しを消して [ThinkingFrame] を
-/// 出し、返答の最初の塊が届いたら (思考の畳みを待たず) 吹き出しを出す。思考の
-/// 塊が 1 つも届かなければ枠を出さず、返答の最初の塊でそのまま吹き出しが現れる。
+/// Wraps itself in a `RevealTicker` and listens to [StreamingReplyController]
+/// directly, stacking [ThinkingFrame] above the reply bubble. Before
+/// anything is received, shows a white rounded bubble with 3 waiting dots
+/// ([WaitingDots]). Once thinking chunks start arriving, replaces the bubble
+/// with [ThinkingFrame]; once the reply's first chunk arrives (without
+/// waiting for the thinking frame to collapse), shows the bubble. If no
+/// thinking chunk ever arrives, no frame is shown and the bubble simply
+/// appears on the reply's first chunk.
 class StreamingReply extends StatelessWidget {
-  const StreamingReply({super.key, required this.controller});
+  const StreamingReply({
+    super.key,
+    required this.controller,
+    this.style,
+    this.thinkingTitle = '…',
+    this.thoughtForSeconds,
+  });
 
-  /// 出現状態と思考の枠の状態の入り口。
+  /// The entry point for reveal state and thinking frame state.
   final StreamingReplyController controller;
+
+  /// Look-and-feel values (default if omitted). Passed down to
+  /// [ThinkingFrame], [RevealedMarkdown], and [WaitingDots] via an
+  /// InheritedWidget ([StreamingReplyStyleScope]).
+  final StreamingReplyStyle? style;
+
+  /// Passed straight through to [ThinkingFrame.thinkingTitle].
+  final String thinkingTitle;
+
+  /// Passed straight through to [ThinkingFrame.thoughtForSeconds].
+  final String Function(int seconds)? thoughtForSeconds;
 
   @override
   Widget build(BuildContext context) {
-    return RevealTicker(
-      controller: controller,
-      child: AnimatedBuilder(
-        animation: controller,
-        builder: (context, _) {
-          final showThinkingFrame = controller.thinkingFrame != ThinkingFrameState.none;
-          final showBubble = !showThinkingFrame || controller.reply.receivedCount > 0;
+    final effectiveStyle = style ?? StreamingReplyStyleScope.of(context);
+    return StreamingReplyStyleScope(
+      style: effectiveStyle,
+      child: RevealTicker(
+        controller: controller,
+        child: AnimatedBuilder(
+          animation: controller,
+          builder: (context, _) {
+            final showThinkingFrame =
+                controller.thinkingFrame != ThinkingFrameState.none;
+            final hasReply = controller.reply.receivedCount > 0;
+            final showBody = !showThinkingFrame || hasReply;
 
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (showThinkingFrame) ThinkingFrame(controller: controller),
-              if (showThinkingFrame && showBubble)
-                const SizedBox(height: ReplyTheme.thinkingFrameSpacingBottom),
-              if (showBubble) _ReplyBubble(controller: controller),
-            ],
-          );
-        },
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (showThinkingFrame)
+                  ThinkingFrame(
+                    controller: controller,
+                    thinkingTitle: thinkingTitle,
+                    thoughtForSeconds: thoughtForSeconds,
+                  ),
+                if (showThinkingFrame && showBody)
+                  SizedBox(height: effectiveStyle.thinkingFrameSpacingBottom),
+                if (showBody)
+                  hasReply
+                      ? RevealedMarkdown(
+                          key: Keys.replyText,
+                          controller: controller,
+                          kind: ChunkKind.reply,
+                        )
+                      : const WaitingDots(key: Keys.waitingDots),
+              ],
+            );
+          },
+        ),
       ),
-    );
-  }
-}
-
-/// 返答の吹き出し。受信前は待機の点、返答の最初の塊が届いたら返答の文字。
-class _ReplyBubble extends StatelessWidget {
-  const _ReplyBubble({required this.controller});
-
-  final StreamingReplyController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasReply = controller.reply.receivedCount > 0;
-    return Container(
-      key: Keys.replyBubble,
-      width: double.infinity,
-      constraints: const BoxConstraints(minHeight: ReplyTheme.replyBubbleMinHeight),
-      padding: ReplyTheme.replyBubblePadding,
-      decoration: const BoxDecoration(
-        color: ReplyTheme.replyBubbleBackground,
-        borderRadius: ReplyTheme.replyBubbleBorderRadius,
-        boxShadow: [ReplyTheme.replyBubbleShadow],
-      ),
-      child: hasReply
-          ? RevealedMarkdown(key: Keys.replyText, controller: controller, kind: ChunkKind.reply)
-          : const WaitingDots(key: Keys.waitingDots),
     );
   }
 }

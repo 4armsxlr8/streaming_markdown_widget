@@ -1,29 +1,44 @@
 import 'package:flutter/widgets.dart';
 
-import 'reply_theme.dart';
+import 'markdown_block.dart';
+import 'streaming_reply_style.dart';
 
-/// [level] (`#`〜`######`) の見出しの style を、[ambient] (周囲の style) の
-/// 色を引き継いで返す。mock は見た目を 2 段階 (`h2` 相当・`h3` 相当) しか
-/// 持たないため、`##` まで (`level` <= 2) は `h2` のサイズ・太さ・行間、
-/// `###` 以降は `h3` のそれにする (mock.html の `parseBlocks` と同じ規則)。
-/// 色だけは周囲を引き継ぐ — 引用の中の見出しが本文色ではなく引用の色に
-/// なるようにするため。
-TextStyle headingStyleFor(int level, TextStyle ambient) =>
-    (level <= 2 ? ReplyTheme.h2TextStyle : ReplyTheme.h3TextStyle).copyWith(color: ambient.color);
+/// The style for a heading at [level] (`#`–`######`), merging [style]'s
+/// `h2TextStyle`/`h3TextStyle` onto [ambient] (the running style — body or
+/// blockquote). The mock only has 2 tiers of look (`h2`-equivalent,
+/// `h3`-equivalent), so `##` and shallower (`level` <= 2) get `h2`'s size,
+/// weight, and line-height, and `###` and deeper get `h3`'s (same rule as
+/// mock.html's `parseBlocks`). Neither role sets its own color, so it is
+/// inherited from [ambient] — a heading inside a blockquote gets the quote's
+/// color instead of the body color.
+TextStyle headingStyleFor(
+  int level,
+  TextStyle ambient,
+  StreamingReplyStyle style,
+) => style.resolveHeadingTextStyle(level, ambient);
 
-/// 見出し (`#`〜`######`) 1 つ。
+/// One heading (`#`–`######`).
 class MarkdownHeading extends StatelessWidget {
-  const MarkdownHeading({super.key, required this.level, required this.style, required this.spans});
+  const MarkdownHeading({
+    super.key,
+    required this.block,
+    required this.textStyle,
+  });
 
-  /// 記法の段 (`#` の数。1〜6)。
-  final int level;
+  /// This heading's content (kind is heading).
+  final MarkdownBlock block;
 
-  /// この見出しの style ([headingStyleFor] で決めたもの)。
-  final TextStyle style;
+  /// This heading's style (decided by [headingStyleFor]).
+  final TextStyle textStyle;
 
-  /// 出現状態を反映済みの見出しの中身。
-  final List<InlineSpan> spans;
+  /// The heading level (number of `#`, 1–6).
+  int get level => block.level!;
 
   @override
-  Widget build(BuildContext context) => Text.rich(TextSpan(style: style, children: spans));
+  Widget build(BuildContext context) => Text.rich(
+    applyReveal(
+      TextSpan(style: textStyle, children: block.spans!),
+      block.revealing,
+    ),
+  );
 }

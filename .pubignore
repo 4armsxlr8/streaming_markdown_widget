@@ -1,0 +1,21 @@
+# pub.dev のアーカイブから除外するもの (.gitignore の代わりに使われる)。
+
+# 生成物
+/build/
+/coverage/
+/pubspec.lock
+*.iml
+/example/build/
+/example/coverage/
+/example/.dart_tool/
+/example/android/local.properties
+/example/android/.kotlin/
+/example/ios/Flutter/ephemeral/
+/example/ios/Flutter/Generated.xcconfig
+/example/ios/Flutter/flutter_export_environment.sh
+/example/ios/Runner/GeneratedPluginRegistrant.*
+/example/android/app/src/main/java/io/flutter/plugins/
+
+# ローカルの秘密情報 (API キー)。公開しない
+.env
+.env.*

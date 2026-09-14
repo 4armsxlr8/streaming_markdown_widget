@@ -1,28 +1,37 @@
 import 'package:flutter/widgets.dart';
 
-import 'reply_theme.dart';
+import 'markdown_block.dart';
+import 'streaming_reply_style.dart';
 
-/// コードフェンス (```) 1 つ。等幅・暗色背景。シンタックスハイライトも
-/// コピーボタンも持たない。
+/// One code fence (```` ``` ````). Monospace, dark background. No syntax
+/// highlighting and no copy button.
 class MarkdownCodeBlock extends StatelessWidget {
-  const MarkdownCodeBlock({super.key, required this.spans});
+  const MarkdownCodeBlock({super.key, required this.block});
 
-  /// 出現状態を反映済みの中身 (素の文字。記法として整形しない)。
-  final List<InlineSpan> spans;
+  /// This code block's content (kind is codeBlock).
+  final MarkdownBlock block;
 
   @override
   Widget build(BuildContext context) {
+    final style = StreamingReplyStyleScope.of(context);
+    final ambient = DefaultTextStyle.of(context).style;
     return Container(
       width: double.infinity,
-      padding: ReplyTheme.codeBlockPadding,
+      padding: style.codeBlockPadding,
       decoration: BoxDecoration(
-        color: ReplyTheme.codeBlockBackground,
-        borderRadius: BorderRadius.circular(ReplyTheme.codeBlockBorderRadius),
+        color: style.codeBlockBackground,
+        borderRadius: BorderRadius.circular(style.codeBlockBorderRadius),
       ),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Text.rich(
-          TextSpan(style: ReplyTheme.codeBlockTextStyle, children: spans),
+          applyReveal(
+            TextSpan(
+              text: block.text,
+              style: style.resolveCodeBlockTextStyle(ambient),
+            ),
+            block.revealing,
+          ),
         ),
       ),
     );

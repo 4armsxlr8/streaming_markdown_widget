@@ -12,7 +12,9 @@ import 'package:streaming_markdown_widget/src/partial_markdown.dart';
 ///
 /// ブロックの間に改行が入るので前後の空白は落とす。
 String renderReplyHtml(String partial, {bool complete = false}) =>
-    HtmlRenderer().render(parseReplyMarkdown(partial, complete: complete)).trim();
+    HtmlRenderer()
+        .render(parseReplyMarkdown(partial, complete: complete))
+        .trim();
 
 /// 前処理を通さず、plan が明示登録した構文だけの素の [Document] に通して
 /// HTML 文字列にする (AC-27 の「前処理なし」の比較対象)。
@@ -136,7 +138,9 @@ List<String> rawSymbolViolations(
 /// 長い文字列を報告に乗せるための末尾 40 文字。改行は見やすさのため `⏎` に置く。
 String _tail(String text) {
   final oneLine = text.replaceAll('\n', '⏎');
-  return oneLine.length <= 40 ? oneLine : oneLine.substring(oneLine.length - 40);
+  return oneLine.length <= 40
+      ? oneLine
+      : oneLine.substring(oneLine.length - 40);
 }
 
 String _stripTags(String html) => html.replaceAll(RegExp(r'<[^>]*>'), '');

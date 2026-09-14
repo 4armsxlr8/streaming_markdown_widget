@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:streaming_markdown_widget/src/sample_reply.dart';
 
+import 'fixtures/sample_reply.dart';
 import 'helpers/markdown_html.dart';
 
 /// 書きかけの記法を閉じる前処理の回帰テスト (AC-23, AC-24, AC-25, AC-26, AC-27)。
@@ -79,7 +79,8 @@ void main() {
     expect(
       renderReplyHtml(openQuoteEmphasisPartial),
       '<p>これは <strong>「重要</strong></p>',
-      reason: '開き記号の前は空白なので ** は開き記号として数える。'
+      reason:
+          '開き記号の前は空白なので ** は開き記号として数える。'
           '直後が日本語の句読点 (「) でも太字になり、** の文字は残らない',
     );
   });
@@ -94,21 +95,25 @@ void main() {
 
   // ── AC-24 ──
 
-  test('AC-24 複数行にまたがる強調を 1 文字ずつ届けると、どの段階でも生の ** は無く、可視文字列は次の段階の先頭部分になっている', () {
-    final prefixes = graphemePrefixes(multiLineEmphasis);
+  test(
+    'AC-24 複数行にまたがる強調を 1 文字ずつ届けると、どの段階でも生の ** は無く、可視文字列は次の段階の先頭部分になっている',
+    () {
+      final prefixes = graphemePrefixes(multiLineEmphasis);
 
-    expect(
-      [
-        ...rawSymbolViolations(prefixes),
-        ...visibleGrowthViolations(prefixes),
-      ],
-      isEmpty,
-      reason: '改行をまたぐ書きかけの強調でも ** を閉じ、表示済みの文字が消えたり '
-          '再出現したりしない (全 ${prefixes.length} prefix を検査。2 つの検査を '
-          '1 つの expect にまとめるのは、片方で止まると残りの違反が報告に '
-          '出ないため)',
-    );
-  });
+      expect(
+        [
+          ...rawSymbolViolations(prefixes),
+          ...visibleGrowthViolations(prefixes),
+        ],
+        isEmpty,
+        reason:
+            '改行をまたぐ書きかけの強調でも ** を閉じ、表示済みの文字が消えたり '
+            '再出現したりしない (全 ${prefixes.length} prefix を検査。2 つの検査を '
+            '1 つの expect にまとめるのは、片方で止まると残りの違反が報告に '
+            '出ないため)',
+      );
+    },
+  );
 
   // ── AC-25 ──
 
@@ -116,7 +121,8 @@ void main() {
     expect(
       renderReplyHtml(tableHeaderThenPipe),
       isEmpty,
-      reason: '区切り行が同じ列数そろうまでは見出し行ごと保留する。'
+      reason:
+          '区切り行が同じ列数そろうまでは見出し行ごと保留する。'
           '次の行が区切り行の書きかけ (| 1 文字) の間も、見出し行を表にしてはいけない',
     );
   });
@@ -129,7 +135,8 @@ void main() {
     expect(
       rawSymbolViolations(prefixes),
       isEmpty,
-      reason: '全 ${prefixes.length} prefix の可視文字列 '
+      reason:
+          '全 ${prefixes.length} prefix の可視文字列 '
           '(コードブロック・コードスパンの中身は除く) に $rawSymbols は残らない',
     );
   });
@@ -142,74 +149,93 @@ void main() {
     );
   });
 
-  test('AC-26 日本語の句読点を含む強調を 1 文字ずつ全 prefix で届けても、生の記号が残らず可視文字列は次の prefix の先頭部分になっている', () {
-    final prefixes = graphemePrefixes(openQuoteEmphasisClosed);
+  test(
+    'AC-26 日本語の句読点を含む強調を 1 文字ずつ全 prefix で届けても、生の記号が残らず可視文字列は次の prefix の先頭部分になっている',
+    () {
+      final prefixes = graphemePrefixes(openQuoteEmphasisClosed);
 
-    expect(
-      [
-        ...rawSymbolViolations(prefixes),
-        ...visibleGrowthViolations(prefixes),
-      ],
-      isEmpty,
-      reason: '開き記号の直後が日本語の句読点でも、どの段階でも記号は見せず '
-          '表示済みの文字も消さない',
-    );
-  });
+      expect(
+        [
+          ...rawSymbolViolations(prefixes),
+          ...visibleGrowthViolations(prefixes),
+        ],
+        isEmpty,
+        reason:
+            '開き記号の直後が日本語の句読点でも、どの段階でも記号は見せず '
+            '表示済みの文字も消さない',
+      );
+    },
+  );
 
-  test('AC-26 複数行の強調を 1 文字ずつ全 prefix で届けても、生の記号が残らず可視文字列は次の prefix の先頭部分になっている', () {
-    final prefixes = graphemePrefixes(multiLineEmphasis);
+  test(
+    'AC-26 複数行の強調を 1 文字ずつ全 prefix で届けても、生の記号が残らず可視文字列は次の prefix の先頭部分になっている',
+    () {
+      final prefixes = graphemePrefixes(multiLineEmphasis);
 
-    expect(
-      [
-        ...rawSymbolViolations(prefixes),
-        ...visibleGrowthViolations(prefixes),
-      ],
-      isEmpty,
-      reason: '改行をまたぐ強調でも、どの段階でも記号は見せず表示済みの文字も消さない',
-    );
-  });
+      expect(
+        [
+          ...rawSymbolViolations(prefixes),
+          ...visibleGrowthViolations(prefixes),
+        ],
+        isEmpty,
+        reason: '改行をまたぐ強調でも、どの段階でも記号は見せず表示済みの文字も消さない',
+      );
+    },
+  );
 
-  test('AC-26 括弧入り URL のリンクを 1 文字ずつ全 prefix で届けても、生の記号が残らず可視文字列は次の prefix の先頭部分になっている', () {
-    final prefixes = graphemePrefixes(parenthesizedUrlLink);
+  test(
+    'AC-26 括弧入り URL のリンクを 1 文字ずつ全 prefix で届けても、生の記号が残らず可視文字列は次の prefix の先頭部分になっている',
+    () {
+      final prefixes = graphemePrefixes(parenthesizedUrlLink);
 
-    expect(
-      [
-        ...rawSymbolViolations(prefixes),
-        ...visibleGrowthViolations(prefixes),
-      ],
-      isEmpty,
-      reason: 'URL の中の ( ) で書きかけの判定が崩れても、生の [ ]( を見せず '
-          'ラベルの表示も消さない',
-    );
-  });
+      expect(
+        [
+          ...rawSymbolViolations(prefixes),
+          ...visibleGrowthViolations(prefixes),
+        ],
+        isEmpty,
+        reason:
+            'URL の中の ( ) で書きかけの判定が崩れても、生の [ ]( を見せず '
+            'ラベルの表示も消さない',
+      );
+    },
+  );
 
-  test('AC-26 コードスパンの中の画像記法と書きかけのリンクを 1 文字ずつ全 prefix で届けても、生の記号が残らず可視文字列は次の prefix の先頭部分になっている', () {
-    final prefixes = graphemePrefixes(codeSpanFixture);
+  test(
+    'AC-26 コードスパンの中の画像記法と書きかけのリンクを 1 文字ずつ全 prefix で届けても、生の記号が残らず可視文字列は次の prefix の先頭部分になっている',
+    () {
+      final prefixes = graphemePrefixes(codeSpanFixture);
 
-    expect(
-      [
-        ...rawSymbolViolations(prefixes),
-        ...visibleGrowthViolations(prefixes),
-      ],
-      isEmpty,
-      reason: 'コードスパンの中身は記号の検査から除くが、可視文字としては '
-          '消えたり増えたりしてはいけない (前処理が足したエスケープの \\ も含む)',
-    );
-  });
+      expect(
+        [
+          ...rawSymbolViolations(prefixes),
+          ...visibleGrowthViolations(prefixes),
+        ],
+        isEmpty,
+        reason:
+            'コードスパンの中身は記号の検査から除くが、可視文字としては '
+            '消えたり増えたりしてはいけない (前処理が足したエスケープの \\ も含む)',
+      );
+    },
+  );
 
-  test('AC-26 表の後に続く段落を 1 文字ずつ全 prefix で届けても、生の記号が残らず可視文字列は次の prefix の先頭部分になっている', () {
-    final prefixes = graphemePrefixes(tableThenParagraph);
+  test(
+    'AC-26 表の後に続く段落を 1 文字ずつ全 prefix で届けても、生の記号が残らず可視文字列は次の prefix の先頭部分になっている',
+    () {
+      final prefixes = graphemePrefixes(tableThenParagraph);
 
-    expect(
-      [
-        ...rawSymbolViolations(prefixes),
-        ...visibleGrowthViolations(prefixes),
-      ],
-      isEmpty,
-      reason: '表が閉じた後の段落を保留したり、区切り行の --- を見せたり、'
-          '一度描いた見出し行を消したりしない',
-    );
-  });
+      expect(
+        [
+          ...rawSymbolViolations(prefixes),
+          ...visibleGrowthViolations(prefixes),
+        ],
+        isEmpty,
+        reason:
+            '表が閉じた後の段落を保留したり、区切り行の --- を見せたり、'
+            '一度描いた見出し行を消したりしない',
+      );
+    },
+  );
 
   test('AC-26 散文の中の | は、行末の改行が届くまで描かれず、その間も可視文字列は次の prefix の先頭部分になっている', () {
     final prefixes = graphemePrefixes(pipeInProse);
@@ -225,7 +251,8 @@ void main() {
         ...visibleGrowthViolations(prefixes),
       ],
       isEmpty,
-      reason: '改行が届くまでは表の見出し行の可能性が残るので | を見せず、'
+      reason:
+          '改行が届くまでは表の見出し行の可能性が残るので | を見せず、'
           'かつ | が届いた瞬間に、それまで描いていた「列は a」が消えてもいけない',
     );
   });
@@ -239,7 +266,8 @@ void main() {
         visibleTextOf(renderReplyHtml(prefixes[pipeInProseNewlineIndex])),
       ],
       [pipeInProseBeforeNewline, pipeInProseAtNewline],
-      reason: '改行が届く直前は | の前までが描かれ、改行が届いて表でないと分かった時点で '
+      reason:
+          '改行が届く直前は | の前までが描かれ、改行が届いて表でないと分かった時点で '
           '| を含む行が一斉に現れる (2 つの段階を 1 つの expect で見て、'
           'どちらが崩れたか報告に両方出す)',
     );
@@ -258,13 +286,17 @@ void main() {
     'value_ です',
   ]) {
     final label = completeFixture.replaceAll('\n', '⏎');
-    test('AC-27 $label が complete: true で parse されると、前処理なしの素の Document と同じ結果になる', () {
-      expect(
-        renderReplyHtml(completeFixture, complete: true),
-        renderRawHtml(completeFixture),
-        reason: '受信完了後は書きかけの記法を閉じも落としもしない。'
-            '前処理が足した記号・落とした文字が残ってはいけない',
-      );
-    });
+    test(
+      'AC-27 $label が complete: true で parse されると、前処理なしの素の Document と同じ結果になる',
+      () {
+        expect(
+          renderReplyHtml(completeFixture, complete: true),
+          renderRawHtml(completeFixture),
+          reason:
+              '受信完了後は書きかけの記法を閉じも落としもしない。'
+              '前処理が足した記号・落とした文字が残ってはいけない',
+        );
+      },
+    );
   }
 }

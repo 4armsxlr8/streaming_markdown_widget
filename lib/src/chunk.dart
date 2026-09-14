@@ -1,22 +1,23 @@
-/// 塊の印: 思考か返答か。
+/// A chunk's kind: thinking or reply.
 enum ChunkKind {
-  /// 思考の塊。
+  /// A thinking chunk.
   thinking,
 
-  /// 返答の塊。
+  /// A reply chunk.
   reply,
 }
 
-/// 返答の Widget に届く 1 回分の塊。
+/// One chunk delivered to the reply widget.
 ///
-/// 1 回に届く数文字の文字列 ([text]) と、その印 ([kind]) を持つ。文字数は
-/// 届き方しだいで、1 文字のことも十数文字のこともある。
+/// Holds the string received in one delivery ([text]) and its kind ([kind]).
+/// The character count varies with how it arrives — sometimes a single
+/// character, sometimes a dozen or more.
 class Chunk {
   const Chunk(this.text, {this.kind = ChunkKind.reply});
 
-  /// 塊の文字列。
+  /// The chunk's text.
   final String text;
 
-  /// 塊の印: 思考か返答か。
+  /// The chunk's kind: thinking or reply.
   final ChunkKind kind;
 }

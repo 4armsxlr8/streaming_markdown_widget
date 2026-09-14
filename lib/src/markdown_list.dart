@@ -1,43 +1,35 @@
 import 'package:flutter/widgets.dart';
 
-import 'reply_theme.dart';
+import 'markdown_block.dart';
+import 'streaming_reply_style.dart';
 
-/// 箇条書き (`- `) または番号リスト (`1. `) の項目 1 つぶんの、出現状態を
-/// 反映済みの中身。
-class MarkdownListItem {
-  const MarkdownListItem({required this.inline, this.children = const []});
-
-  /// 項目自身のインライン部分 (タイトな項目の中身、または緩い項目の最初の
-  /// 段落の中身)。
-  final List<InlineSpan> inline;
-
-  /// [inline] に続く子ブロック (入れ子の `MarkdownList`、緩い項目の続きの
-  /// 段落など)。無ければ空。
-  final List<Widget> children;
-}
-
-/// 箇条書き (`- `) または番号リスト (`1. `) 1 つ。
+/// One bullet list (`- `) or numbered list (`1. `).
 ///
-/// 点 "•" と番号 "1." は受信した文字ではなく、この Widget が描く
-/// (出現の対象外。常に不透明)。
+/// The bullet "•" and the number "1." are drawn by this widget, not received
+/// text (not subject to revealing — always opaque).
 class MarkdownList extends StatelessWidget {
-  const MarkdownList({super.key, required this.ordered, required this.items, required this.style});
+  const MarkdownList({super.key, required this.block, required this.textStyle});
 
-  /// 番号リストなら true、箇条書きなら false。
-  final bool ordered;
+  /// This list's content (kind is bulletList or numberedList).
+  final MarkdownBlock block;
 
-  /// 項目ごとの、出現状態を反映済みの中身。
-  final List<MarkdownListItem> items;
+  /// The surrounding style (including color). Used as the base style for
+  /// both the marker ("•"/"1.") and the items — always inherited from the
+  /// surroundings so a list inside a blockquote gets the quote's color
+  /// instead of the body color.
+  final TextStyle textStyle;
 
-  /// 周囲の style (色を含む)。マーカー ("•"/"1.") と項目の基準 style に使う
-  /// (引用の中では本文色ではなく引用の色になるように、常に周囲を引き継ぐ)。
-  final TextStyle style;
+  /// True for a numbered list, false for a bullet list.
+  bool get ordered => block.ordered!;
 
   @override
   Widget build(BuildContext context) {
-    // OS の文字サイズ設定 (textScaler) を掛ける (掛けないと 100% を超える
-    // 設定で番号・点の幅が本文の文字幅に追いつかず、はみ出す)。
-    final indent = MediaQuery.textScalerOf(context).scale(ReplyTheme.listIndent);
+    final style = StreamingReplyStyleScope.of(context);
+    final items = block.items!;
+    // Apply the OS text-scale setting (textScaler) — without it, a scale
+    // setting above 100% makes the number/bullet column too narrow for the
+    // body text, causing overflow.
+    final indent = MediaQuery.textScalerOf(context).scale(style.listIndent);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -45,7 +37,7 @@ class MarkdownList extends StatelessWidget {
         for (var i = 0; i < items.length; i++)
           Padding(
             padding: EdgeInsets.only(
-              bottom: i == items.length - 1 ? 0 : ReplyTheme.listItemSpacing,
+              bottom: i == items.length - 1 ? 0 : style.listItemSpacing,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -54,27 +46,33 @@ class MarkdownList extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 幅を固定の SizedBox にせず ConstrainedBox の minWidth に
-                    // するのは、"10." のような 2 桁の番号が固定幅に収まらず
-                    // 折り返してしまうのを防ぐため — 記号の Text は softWrap:
-                    // false / maxLines: 1 で 1 行に固定し、幅は自然にはみ出させる。
+                    // Uses ConstrainedBox's minWidth instead of a fixed-width
+                    // SizedBox so a 2-digit number like "10." doesn't get
+                    // wrapped for not fitting a fixed width — the marker
+                    // text is pinned to one line (softWrap: false, maxLines:
+                    // 1) and allowed to overflow that width naturally.
                     ConstrainedBox(
                       constraints: BoxConstraints(minWidth: indent),
                       child: Text(
                         ordered ? '${i + 1}.' : '•',
-                        style: style,
+                        style: textStyle,
                         softWrap: false,
                         maxLines: 1,
                       ),
                     ),
                     Expanded(
-                      child: Text.rich(TextSpan(style: style, children: items[i].inline)),
+                      child: Text.rich(
+                        _revealItem(items[i], block.revealing, textStyle),
+                      ),
                     ),
                   ],
                 ),
                 if (items[i].children.isNotEmpty)
                   Padding(
-                    padding: EdgeInsets.only(left: indent, top: ReplyTheme.listItemSpacing),
+                    padding: EdgeInsets.only(
+                      left: indent,
+                      top: style.listItemSpacing,
+                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
@@ -87,4 +85,17 @@ class MarkdownList extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Applies [item]'s own inline content the slice of [revealing] (belonging
+/// to the whole list it's part of) that falls within [item]'s range.
+InlineSpan _revealItem(
+  MarkdownBlockListItem item,
+  List<RevealingChar> revealing,
+  TextStyle style,
+) {
+  if (revealing.isEmpty) return TextSpan(style: style, children: item.inline);
+  final length = inlineSpansLength(item.inline);
+  final local = revealingSlice(revealing, start: item.start, length: length);
+  return applyReveal(TextSpan(style: style, children: item.inline), local);
 }

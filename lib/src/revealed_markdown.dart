@@ -2,6 +2,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:markdown/markdown.dart' as md;
 
+import 'markdown_block.dart';
 import 'markdown_blockquote.dart';
 import 'markdown_code_block.dart';
 import 'markdown_heading.dart';
@@ -9,42 +10,73 @@ import 'markdown_list.dart';
 import 'markdown_paragraph.dart';
 import 'markdown_table.dart';
 import 'partial_markdown.dart';
-import 'reply_theme.dart';
 import 'reveal_clock.dart' show revealOpacity;
 import 'reveal_ticker.dart' show syncTicker;
 import 'streaming_reply_controller.dart';
+import 'streaming_reply_style.dart';
 
-/// Controller の 1 区分 (思考か返答) の `revealedText` を描く Widget。
+/// Widget that draws the `revealedText` of one of the controller's two
+/// sections (thinking or reply).
 ///
-/// [formatted] が true なら Markdown として整形し (見出し・段落・太字・斜体・
-/// インラインコード・コードブロック・箇条書き・番号リスト・引用・リンク・表)、
-/// false なら素の文字 (改行はそのまま改行) を描く。どちらも同じ出現の仕組みを
-/// 使う: 可視文字を AST の走査順 (formatted: false なら文字の並び順そのもの) に
-/// 通し番号を振り、前フレームの可視文字列との共通接頭辞より後ろを「今描かれた
-/// 文字」として出現開始時刻を付ける (書きかけの記法のために描かれていなかった
-/// 文字が、描かれた時点で一斉に出現を始めるのもこの仕組みで説明できる)。
-/// 出現中の文字だけを 1 文字 (書記素) 1 TextSpan にして style の色のアルファで
-/// 不透明度を出し、表示済みの文字は 1 つの span にまとめる。
+/// When [formatted] is true it formats the text as Markdown (headings,
+/// paragraphs, bold, italic, inline code, code blocks, bullet lists, numbered
+/// lists, blockquotes, links, tables); when false it draws plain text
+/// (newlines stay newlines). Both use the same reveal mechanism: the visible
+/// characters are numbered in AST traversal order (with `formatted: false`,
+/// simply in the order the characters appear), and everything past the common
+/// prefix with the previous frame's visible text counts as "drawn just now"
+/// and gets a reveal start time (this also explains why characters that were
+/// not being drawn because of partial, not-yet-closed notation all start
+/// revealing together at the moment they are drawn). Only the characters that
+/// are still revealing become one TextSpan per character (grapheme), with the
+/// opacity carried by the alpha of the style's color; already revealed
+/// characters are merged into a single span. The fade time behind that
+/// opacity is [controller]'s own `style.fadeDuration`, not [style]'s (see the
+/// time-fields split in the [StreamingReplyStyle] class doc).
 ///
-/// [StreamingReplyController] を listen して再描画するほか、出現中の可視文字が
-/// ある間は自前の Ticker で再描画を続ける (Controller 側の needsTicks が false
-/// になった後も、その時点で出現中の文字の 300ms を描き切るため)。
+/// When [formatted] is true, how a block is drawn can be overridden per kind
+/// through [blockBuilders]. Kinds you do not pass are drawn by the default
+/// block Widget ([MarkdownHeading] and the like). The default drawing also
+/// goes through [applyReveal], so an overridden kind that uses [applyReveal]
+/// gets the same opacities as the default.
+///
+/// Besides listening to [StreamingReplyController] and rebuilding, it keeps
+/// rebuilding from its own Ticker while there are visible characters still
+/// revealing, and while the controller still needs the clock
+/// ([StreamingReplyController.needsTicks]). The former is so that the 300ms of
+/// the characters revealing at that moment is drawn to completion even after
+/// the controller's own needsTicks has gone false; the latter is so that, when
+/// placed on its own rather than wrapped in a `RevealTicker`, it calls
+/// [StreamingReplyController.tick] itself to advance the clock (in the
+/// composed Widget that layers it with `RevealTicker`, the outer Ticker does
+/// the same job).
 class RevealedMarkdown extends StatefulWidget {
   const RevealedMarkdown({
     super.key,
     required this.controller,
     required this.kind,
+    this.style,
     this.formatted = true,
+    this.blockBuilders,
   });
 
-  /// 出現状態を含む観測値の入り口。
+  /// Entry point for the observed values, including the reveal state.
   final StreamingReplyController controller;
 
-  /// どちらの区分を描くか。
+  /// Which of the two sections to draw.
   final ChunkKind kind;
 
-  /// Markdown として整形するかどうか。
+  /// Look-and-feel values (the defaults when omitted). Passed down to the
+  /// block Widgets through an InheritedWidget ([StreamingReplyStyleScope]).
+  final StreamingReplyStyle? style;
+
+  /// Whether to format the text as Markdown.
   final bool formatted;
+
+  /// Per-kind overrides for how a block is drawn. Kinds you do not pass are
+  /// drawn by the default block Widget (not consulted at all when [formatted]
+  /// is false).
+  final Map<MarkdownBlockKind, MarkdownBlockBuilder>? blockBuilders;
 
   @override
   State<RevealedMarkdown> createState() => _RevealedMarkdownState();
@@ -54,29 +86,33 @@ class _RevealedMarkdownState extends State<RevealedMarkdown>
     with SingleTickerProviderStateMixin {
   late final Ticker _ticker;
 
-  /// 前フレームで描いた可視文字 (書記素)。共通接頭辞の比較に使う。
+  /// The visible characters (graphemes) drawn in the previous frame. Used for
+  /// the common-prefix comparison.
   List<String> _previousChars = const [];
 
-  /// [_previousChars] と対になる、各文字の出現開始時刻。
+  /// The reveal start time of each character, paired with [_previousChars].
   List<Duration> _previousStarts = const [];
 
-  /// 直近のフレームで読み取った [SchedulerBinding.currentFrameTimeStamp]。
-  /// フレーム外 (`schedulerPhase == idle`、冷間起動の最初の attach など) では
-  /// `currentFrameTimeStamp` の読み取りが assert に当たるため、そのときは
-  /// これ (無ければ [Duration.zero]) を使う。
+  /// The [SchedulerBinding.currentFrameTimeStamp] read during the most recent
+  /// frame. Outside a frame (`schedulerPhase == idle`, the first attach on a
+  /// cold start, and so on) reading `currentFrameTimeStamp` trips an assert,
+  /// so this value (or [Duration.zero] if there is none) is used instead.
   Duration _lastFrameTime = Duration.zero;
 
-  /// 直前のフレームで [build] が算出した「受信完了として parse してよいか」
-  /// (前フレームの `complete`)。false → true に切り替わった最初のフレームを
-  /// 検出するのに使う (Q11: 書きかけのまま閉じていた記法が、受信完了後の
-  /// 生の記号込みの文字列に置き換わって可視文字列の形が変わる瞬間、表示済み
-  /// だった文字が出現し直すのを防ぐ)。
+  /// What [build] computed in the previous frame for "is it safe to parse this
+  /// as if receiving had finished" (the previous frame's `complete`). Used to
+  /// detect the first frame where it flips from false to true (Q11: at the
+  /// moment notation that had been closed off while still partial is replaced
+  /// by the post-receiving string that includes the raw markers, and the shape
+  /// of the visible text therefore changes, this keeps characters that were
+  /// already revealed from revealing all over again).
   bool _wasComplete = false;
 
-  /// 直前に parse した `(revealedText, complete)` と、その結果の AST。
-  /// 可視文字列も [complete] も変わっていないフレーム (毎フレーム描き直す間の
-  /// 少なくとも 1/3) は parse をやり直さない — AST は読むだけで書き換えない
-  /// ([_buildBlocks] 以下は Widget を作るだけ) ので使い回して安全。
+  /// The last `(revealedText, complete)` that was parsed, and the AST it
+  /// produced. Frames where neither the visible text nor [complete] has
+  /// changed (at least one frame in three while it redraws every frame) do not
+  /// reparse — the AST is only read and never rewritten ([_buildBlocks] and
+  /// below only build Widgets), so reusing it is safe.
   String? _cachedRevealedText;
   bool? _cachedComplete;
   List<md.Node>? _cachedNodes;
@@ -95,8 +131,16 @@ class _RevealedMarkdownState extends State<RevealedMarkdown>
   @override
   void initState() {
     super.initState();
-    _ticker = createTicker((_) => setState(() {}));
+    _ticker = createTicker(_onTick);
     widget.controller.addListener(_onControllerChanged);
+  }
+
+  /// The per-frame callback of [_ticker]: first advance the controller's clock
+  /// (when this Widget is placed on its own there is no other part to drive
+  /// it), then rebuild so that its own reveal opacities are recomputed.
+  void _onTick(Duration elapsed) {
+    widget.controller.tick(SchedulerBinding.instance.currentFrameTimeStamp);
+    setState(() {});
   }
 
   @override
@@ -106,10 +150,12 @@ class _RevealedMarkdownState extends State<RevealedMarkdown>
       oldWidget.controller.removeListener(_onControllerChanged);
       widget.controller.addListener(_onControllerChanged);
     }
-    if (oldWidget.controller != widget.controller || oldWidget.kind != widget.kind) {
-      // controller / kind が変わったら、別の文字列を描くことになるので
-      // 前フレームの可視文字列との共通接頭辞比較をリセットする (でないと
-      // 無関係な文字列同士を比較して出現開始時刻を誤って引き継ぐ)。
+    if (oldWidget.controller != widget.controller ||
+        oldWidget.kind != widget.kind) {
+      // A changed controller / kind means a different string will be drawn,
+      // so reset the common-prefix comparison against the previous frame's
+      // visible text (otherwise unrelated strings get compared and reveal
+      // start times are carried over incorrectly).
       _previousChars = const [];
       _previousStarts = const [];
       _wasComplete = false;
@@ -130,27 +176,35 @@ class _RevealedMarkdownState extends State<RevealedMarkdown>
 
   @override
   Widget build(BuildContext context) {
+    final style = widget.style ?? StreamingReplyStyleScope.of(context);
+    final ambient = DefaultTextStyle.of(context).style;
     final section = widget.kind == ChunkKind.thinking
         ? widget.controller.thinking
         : widget.controller.reply;
     final baseStyle = widget.kind == ChunkKind.thinking
-        ? ReplyTheme.thinkingTextStyle
-        : ReplyTheme.bodyTextStyle;
+        ? style.resolveThinkingTextStyle(ambient)
+        : style.resolveBodyTextStyle(ambient);
     final now = SchedulerBinding.instance.schedulerPhase == SchedulerPhase.idle
         ? _lastFrameTime
         : SchedulerBinding.instance.currentFrameTimeStamp;
     _lastFrameTime = now;
 
-    // 受信完了済みで、受信した文字が (出現の途中であっても) 全て出現を
-    // 始めていれば、これで全文として parse する (書きかけの記法を保留・仮閉じ
-    // したまま永久に固定されるのを防ぐ)。
-    final complete = widget.controller.isComplete && section.startedCount == section.receivedCount;
-    // complete が false → true に切り替わる最初のフレームだけ、可視文字列が
-    // 前フレームと変わった位置以降の文字を即座に「表示済み」として確定する
-    // (Q11)。整形あり (formatted) のときだけ関係する — 書きかけの記法を
-    // 保留・仮閉じした可視文字列と、受信完了後の生の記号込みの可視文字列とで、
-    // 同じ表示済みの部分の形が変わり得るのはこの経路だけのため。可視文字列が
-    // 変わっていなければ (sampleReply など) このフレームは何も変えない。
+    // Once receiving has finished and every received character has started
+    // revealing (even if some are still mid-reveal), parse this as the whole
+    // text (which keeps partial notation from staying held back or
+    // provisionally closed forever).
+    final complete =
+        widget.controller.isComplete &&
+        section.startedCount == section.receivedCount;
+    // Only on the first frame where complete flips from false to true, the
+    // characters from the position where the visible text differs from the
+    // previous frame onward are settled as "revealed" immediately (Q11). This
+    // only matters with formatting on (formatted) — that is the only path
+    // where the shape of the same already revealed part can change between
+    // the visible text with partial notation held back or provisionally
+    // closed and the visible text after receiving has finished, which
+    // includes the raw markers. If the visible text has not changed
+    // (sampleReply, for instance) this frame changes nothing.
     final justCompleted = widget.formatted && complete && !_wasComplete;
     _wasComplete = complete;
     final cursor = _RevealCursor(
@@ -158,30 +212,69 @@ class _RevealedMarkdownState extends State<RevealedMarkdown>
       previousChars: _previousChars,
       previousStarts: _previousStarts,
       forceOpaque: justCompleted,
+      // The controller's own style, not the widget-side `style` above — see
+      // the class doc and `_RevealCursor.fade`.
+      fade: widget.controller.style.fadeDuration,
+    );
+    final draw = (
+      cursor: cursor,
+      replyStyle: style,
+      ambient: ambient,
+      context: context,
+      builders: widget.blockBuilders,
     );
 
-    final child = widget.formatted
-        ? Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: _buildBlocks(
-              _parseCached(section.revealedText, complete),
-              cursor,
-              baseStyle,
-            ),
-          )
-        : Text.rich(TextSpan(style: baseStyle, children: _revealSpans(section.revealedText, cursor, baseStyle)));
+    final Widget child;
+    if (widget.formatted) {
+      child = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: _buildBlocks(
+          _parseCached(section.revealedText, complete),
+          baseStyle,
+          draw,
+        ),
+      );
+    } else {
+      final plain = _plainSpan(section.revealedText, cursor, baseStyle);
+      child = Text.rich(
+        TextSpan(
+          style: baseStyle,
+          children: [
+            for (final span in plain) applyReveal(span, cursor.revealing),
+          ],
+        ),
+      );
+    }
 
     _previousChars = cursor.chars;
     _previousStarts = cursor.starts;
 
-    syncTicker(_ticker, wanted: cursor.hasRevealing);
+    // Keep it running while there are revealing characters, and also while
+    // the Controller still needs the clock (placed on its own, this Ticker
+    // stands in for [RevealTicker]). Also tells the Controller whether frames
+    // are actually running (see the doc on [syncTicker]).
+    syncTicker(
+      _ticker,
+      widget.controller,
+      wanted: cursor.hasRevealing || widget.controller.needsTicks,
+    );
 
-    return child;
+    // The screen reader is handed the whole text received so far, even while
+    // receiving (including characters that have not started revealing), and
+    // the per-character spans of the revealing characters are excluded so
+    // they do not get mixed in as child nodes of what is read out.
+    final semanticChild = Semantics(
+      label: section.text,
+      excludeSemantics: true,
+      child: child,
+    );
+
+    return StreamingReplyStyleScope(style: style, child: semanticChild);
   }
 }
 
-/// ブロック 1 つと、その下余白。
+/// One block and the spacing below it.
 class _Block {
   const _Block(this.widget, this.spacingBottom);
 
@@ -189,20 +282,36 @@ class _Block {
   final double spacingBottom;
 }
 
-/// 引用の入れ子で [_buildBlocks] が再帰する深さの上限 (安い保険。作り物の
-/// サンプルの範囲を超える数千段の入れ子で `StackOverflowError` になるのを防ぐ。
-/// パーサー自身の再帰までは面倒を見ない)。
+/// The depth limit on [_buildBlocks] recursing through nested blockquotes
+/// (cheap insurance. It prevents a `StackOverflowError` from a nesting
+/// thousands of levels deep, beyond anything the fake sample produces. It does
+/// not take care of the parser's own recursion).
 const _maxBlockDepth = 16;
 
-/// ブロックの並びを Widget の並びにする (末尾以外の下余白を SizedBox で挟む)。
+/// The values that stay the same across one whole [_buildBlocks] traversal,
+/// bundled so they thread through as one argument instead of four.
+typedef _Draw = ({
+  _RevealCursor cursor,
+  StreamingReplyStyle replyStyle,
+  // The surrounding DefaultTextStyle, captured once in RevealedMarkdown.build
+  // (see the StreamingReplyStyle class doc's merge rules) — codeBlock/table
+  // roles merge onto this directly, unlike heading/blockquote/link/inline
+  // code, which merge onto the running ambientStyle instead.
+  TextStyle ambient,
+  BuildContext context,
+  Map<MarkdownBlockKind, MarkdownBlockBuilder>? builders,
+});
+
+/// Turns a sequence of blocks into a sequence of Widgets (inserting the bottom
+/// spacing of every block but the last as a SizedBox).
 List<Widget> _buildBlocks(
   List<md.Node> nodes,
-  _RevealCursor cursor,
-  TextStyle ambientStyle, {
+  TextStyle ambientStyle,
+  _Draw draw, {
   int depth = 0,
 }) {
   final blocks = <_Block>[
-    for (final node in nodes) ?_buildBlock(node, cursor, ambientStyle, depth),
+    for (final node in nodes) ?_buildBlock(node, ambientStyle, depth, draw),
   ];
   final widgets = <Widget>[];
   for (var i = 0; i < blocks.length; i++) {
@@ -214,19 +323,80 @@ List<Widget> _buildBlocks(
   return widgets;
 }
 
-/// [spans] を [style] で段落として描く [_Block] (下余白は [ReplyTheme.blockSpacing])。
-/// 裸の `Text` の安全網・`p`・引用の深さ上限・未知タグの安全網の 4 か所で使う。
-_Block _paragraphBlock(List<InlineSpan> spans, TextStyle style) =>
-    _Block(MarkdownParagraph(spans: spans, style: style), ReplyTheme.blockSpacing);
+/// Returns the override in [_Draw.builders] for [block.kind] if there is one,
+/// and [defaultWidget] otherwise.
+Widget _resolveBlock(_Draw draw, MarkdownBlock block, Widget defaultWidget) =>
+    draw.builders?[block.kind]?.call(draw.context, block) ?? defaultWidget;
 
-_Block? _buildBlock(md.Node node, _RevealCursor cursor, TextStyle ambientStyle, int depth) {
+/// Assembles a paragraph [MarkdownBlock] from [text] (the visible text to draw
+/// as a paragraph) and turns the override from [_Draw.builders] — or the
+/// default [MarkdownParagraph] when there is none — into a [_Block]. Called
+/// only from [_inlineParagraphBlock].
+_Block _paragraphBlock(
+  String text,
+  List<InlineSpan> spans,
+  List<RevealingChar> revealing,
+  TextStyle style,
+  _Draw draw,
+) {
+  final block = MarkdownBlock(
+    kind: MarkdownBlockKind.paragraph,
+    text: text,
+    revealing: revealing,
+    spans: spans,
+  );
+  return _Block(
+    _resolveBlock(
+      draw,
+      block,
+      MarkdownParagraph(block: block, textStyle: style),
+    ),
+    draw.replyStyle.blockSpacing,
+  );
+}
+
+/// Runs [nodes] through [_buildInlineSpans] while recording the visible text
+/// and revealing characters they consume from [draw]'s cursor, and turns the
+/// result into a paragraph [_Block] via [_paragraphBlock]. The shared body of
+/// the four safety nets that draw a subtree as a plain paragraph: a bare
+/// `Text` (wrapped as a one-element node list), `p`, the blockquote depth
+/// limit, and an unknown tag.
+_Block _inlineParagraphBlock(
+  List<md.Node>? nodes,
+  TextStyle style,
+  int depth,
+  _Draw draw,
+) {
+  final cursor = draw.cursor;
+  final start = cursor.chars.length;
+  final spans = _buildInlineSpans(nodes, style, draw, depth: depth);
+  return _paragraphBlock(
+    cursor.chars.sublist(start).join(),
+    spans,
+    revealingSlice(
+      cursor.revealing,
+      start: start,
+      length: cursor.chars.length - start,
+    ),
+    style,
+    draw,
+  );
+}
+
+_Block? _buildBlock(
+  md.Node node,
+  TextStyle ambientStyle,
+  int depth,
+  _Draw draw,
+) {
   if (node is md.Text) {
-    // 安全網: 登録したブロック構文はトップレベルに裸の Text を返さないが、
-    // 念のため段落として描く。
-    return _paragraphBlock(_revealSpans(node.text, cursor, ambientStyle), ambientStyle);
+    // Safety net: the block syntaxes that are registered never return a bare
+    // Text at the top level, but draw it as a paragraph just in case.
+    return _inlineParagraphBlock([node], ambientStyle, depth, draw);
   }
   if (node is! md.Element) return null;
 
+  final cursor = draw.cursor;
   switch (node.tag) {
     case 'h1':
     case 'h2':
@@ -235,79 +405,149 @@ _Block? _buildBlock(md.Node node, _RevealCursor cursor, TextStyle ambientStyle, 
     case 'h5':
     case 'h6':
       final level = int.parse(node.tag.substring(1));
-      final style = headingStyleFor(level, ambientStyle);
-      return _Block(
-        MarkdownHeading(
-          level: level,
-          style: style,
-          spans: _buildInlineSpans(node.children, cursor, style, depth: depth),
+      final style = headingStyleFor(level, ambientStyle, draw.replyStyle);
+      final start = cursor.chars.length;
+      final spans = _buildInlineSpans(node.children, style, draw, depth: depth);
+      final block = MarkdownBlock(
+        kind: MarkdownBlockKind.heading,
+        text: cursor.chars.sublist(start).join(),
+        revealing: revealingSlice(
+          cursor.revealing,
+          start: start,
+          length: cursor.chars.length - start,
         ),
-        level <= 2 ? ReplyTheme.h2SpacingBottom : ReplyTheme.h3SpacingBottom,
+        level: level,
+        spans: spans,
+      );
+      return _Block(
+        _resolveBlock(
+          draw,
+          block,
+          MarkdownHeading(block: block, textStyle: style),
+        ),
+        level <= 2
+            ? draw.replyStyle.h2SpacingBottom
+            : draw.replyStyle.h3SpacingBottom,
       );
 
     case 'p':
-      return _paragraphBlock(
-        _buildInlineSpans(node.children, cursor, ambientStyle, depth: depth),
-        ambientStyle,
-      );
+      return _inlineParagraphBlock(node.children, ambientStyle, depth, draw);
 
     case 'ul':
     case 'ol':
-      final items = <MarkdownListItem>[
+      final ordered = node.tag == 'ol';
+      final start = cursor.chars.length;
+      final items = <MarkdownBlockListItem>[
         for (final item in node.children ?? const <md.Node>[])
-          if (item is md.Element) _buildListItem(item, cursor, ambientStyle, depth),
+          if (item is md.Element)
+            _buildListItem(item, ambientStyle, depth, draw, listStart: start),
       ];
+      final block = MarkdownBlock(
+        kind: ordered
+            ? MarkdownBlockKind.numberedList
+            : MarkdownBlockKind.bulletList,
+        text: cursor.chars.sublist(start).join(),
+        revealing: revealingSlice(
+          cursor.revealing,
+          start: start,
+          length: cursor.chars.length - start,
+        ),
+        ordered: ordered,
+        items: items,
+      );
       return _Block(
-        MarkdownList(ordered: node.tag == 'ol', items: items, style: ambientStyle),
-        ReplyTheme.blockSpacing,
+        _resolveBlock(
+          draw,
+          block,
+          MarkdownList(block: block, textStyle: ambientStyle),
+        ),
+        draw.replyStyle.blockSpacing,
       );
 
     case 'blockquote':
-      final quoteStyle = ambientStyle.copyWith(color: ReplyTheme.quoteTextColor);
+      final quoteStyle = draw.replyStyle.resolveQuoteTextStyle(ambientStyle);
       if (depth >= _maxBlockDepth) {
-        // 深さの上限を超えた部分木は、それ以上再帰せず素の段落として描く。
-        return _paragraphBlock(
-          _buildInlineSpans(node.children, cursor, quoteStyle, depth: depth),
-          quoteStyle,
-        );
+        // A subtree past the depth limit is drawn as a plain paragraph
+        // without recursing any further.
+        return _inlineParagraphBlock(node.children, quoteStyle, depth, draw);
       }
-      return _Block(
-        MarkdownBlockquote(
-          children: _buildBlocks(node.children ?? const [], cursor, quoteStyle, depth: depth + 1),
+      final start = cursor.chars.length;
+      final children = _buildBlocks(
+        node.children ?? const [],
+        quoteStyle,
+        draw,
+        depth: depth + 1,
+      );
+      final block = MarkdownBlock(
+        kind: MarkdownBlockKind.blockquote,
+        text: cursor.chars.sublist(start).join(),
+        revealing: revealingSlice(
+          cursor.revealing,
+          start: start,
+          length: cursor.chars.length - start,
         ),
-        ReplyTheme.blockSpacing,
+        children: children,
+      );
+      return _Block(
+        _resolveBlock(draw, block, MarkdownBlockquote(block: block)),
+        draw.replyStyle.blockSpacing,
       );
 
     case 'pre':
       final code = _firstElement(node.children);
-      final text = code == null ? '' : _stripFencedTrailingNewline(_codeText(code));
+      final text = code == null
+          ? ''
+          : _stripFencedTrailingNewline(_codeText(code));
+      final start = cursor.chars.length;
+      for (final char in text.characters) {
+        cursor.consume(char);
+      }
+      final block = MarkdownBlock(
+        kind: MarkdownBlockKind.codeBlock,
+        text: text,
+        revealing: revealingSlice(
+          cursor.revealing,
+          start: start,
+          length: cursor.chars.length - start,
+        ),
+        language: code == null ? null : _codeLanguage(code),
+      );
       return _Block(
-        MarkdownCodeBlock(spans: _revealSpans(text, cursor, ReplyTheme.codeBlockTextStyle)),
-        ReplyTheme.blockSpacing,
+        _resolveBlock(draw, block, MarkdownCodeBlock(block: block)),
+        draw.replyStyle.blockSpacing,
       );
 
     case 'table':
-      return _Block(_buildTable(node, cursor, depth), ReplyTheme.blockSpacing);
+      return _Block(
+        _buildTable(node, depth, draw),
+        draw.replyStyle.blockSpacing,
+      );
 
     default:
-      // 対応表に無いタグの安全網: children があれば子の文字をそのまま素の文字で
-      // 描き、children が null (自己完結要素) なら何も描かない。
+      // Safety net for tags that are not in the mapping: if there are
+      // children, draw their text as plain text as-is; if children is null
+      // (a self-contained element), draw nothing.
       final children = node.children;
       if (children == null) return null;
-      return _paragraphBlock(
-        _buildInlineSpans(children, cursor, ambientStyle, depth: depth),
-        ambientStyle,
-      );
+      return _inlineParagraphBlock(children, ambientStyle, depth, draw);
   }
 }
 
-/// `li` 1 つを、インライン部分と、それに続く子ブロック (入れ子の
-/// `MarkdownList`、緩い項目の続きの段落など) に分ける ([Q15])。
+/// Splits one `li` into its inline part and the child blocks that follow it (a
+/// nested `MarkdownList`, the continuation paragraph of a loose item, and so
+/// on) ([Q15]).
 ///
-/// タイトな項目 (`<li>text<ul>…</ul></li>`) は、先頭から `ul`/`ol`/`p` が
-/// 現れるまでをインライン部分とする。緩い項目 (`<li><p>text</p><ul>…</ul></li>`)
-/// は最初の `p` の中身がインライン部分で、そこから先が子ブロック。
-MarkdownListItem _buildListItem(md.Element li, _RevealCursor cursor, TextStyle style, int depth) {
+/// For a tight item (`<li>text<ul>…</ul></li>`), the inline part runs from the
+/// start up to the first `ul`/`ol`/`p`. For a loose item
+/// (`<li><p>text</p><ul>…</ul></li>`) the contents of the first `p` are the
+/// inline part, and everything from there on is a child block.
+MarkdownBlockListItem _buildListItem(
+  md.Element li,
+  TextStyle style,
+  int depth,
+  _Draw draw, {
+  required int listStart,
+}) {
   final children = li.children ?? const <md.Node>[];
   final List<md.Node> inlineNodes;
   final List<md.Node> blockNodes;
@@ -317,7 +557,8 @@ MarkdownListItem _buildListItem(md.Element li, _RevealCursor cursor, TextStyle s
     blockNodes = children.skip(1).toList(growable: false);
   } else {
     final splitAt = children.indexWhere(
-      (n) => n is md.Element && (n.tag == 'ul' || n.tag == 'ol' || n.tag == 'p'),
+      (n) =>
+          n is md.Element && (n.tag == 'ul' || n.tag == 'ol' || n.tag == 'p'),
     );
     if (splitAt == -1) {
       inlineNodes = children;
@@ -327,15 +568,20 @@ MarkdownListItem _buildListItem(md.Element li, _RevealCursor cursor, TextStyle s
       blockNodes = children.sublist(splitAt);
     }
   }
-  return MarkdownListItem(
-    inline: _buildInlineSpans(inlineNodes, cursor, style, depth: depth),
-    children: depth >= _maxBlockDepth
-        ? const []
-        : _buildBlocks(blockNodes, cursor, style, depth: depth + 1),
+  final cursor = draw.cursor;
+  final start = cursor.chars.length - listStart;
+  final inline = _buildInlineSpans(inlineNodes, style, draw, depth: depth);
+  final childWidgets = depth >= _maxBlockDepth
+      ? const <Widget>[]
+      : _buildBlocks(blockNodes, style, draw, depth: depth + 1);
+  return MarkdownBlockListItem(
+    inline: inline,
+    start: start,
+    children: childWidgets,
   );
 }
 
-Widget _buildTable(md.Element table, _RevealCursor cursor, int depth) {
+Widget _buildTable(md.Element table, int depth, _Draw draw) {
   md.Element? thead;
   md.Element? tbody;
   for (final child in table.children ?? const <md.Node>[]) {
@@ -343,10 +589,16 @@ Widget _buildTable(md.Element table, _RevealCursor cursor, int depth) {
     if (child is md.Element && child.tag == 'tbody') tbody = child;
   }
   final headerRow = _firstElement(thead?.children);
+  final cursor = draw.cursor;
+  final start = cursor.chars.length;
+  final headerTextStyle = draw.replyStyle.resolveTableHeaderTextStyle(
+    draw.ambient,
+  );
+  final bodyTextStyle = draw.replyStyle.resolveTableTextStyle(draw.ambient);
   final headerCells = <List<InlineSpan>>[
     for (final cell in headerRow?.children ?? const <md.Node>[])
       if (cell is md.Element)
-        _buildInlineSpans(cell.children, cursor, ReplyTheme.tableHeaderTextStyle, depth: depth),
+        _buildInlineSpans(cell.children, headerTextStyle, draw, depth: depth),
   ];
   final bodyRows = <List<List<InlineSpan>>>[
     for (final row in tbody?.children ?? const <md.Node>[])
@@ -354,64 +606,111 @@ Widget _buildTable(md.Element table, _RevealCursor cursor, int depth) {
         <List<InlineSpan>>[
           for (final cell in row.children ?? const <md.Node>[])
             if (cell is md.Element)
-              _buildInlineSpans(cell.children, cursor, ReplyTheme.tableTextStyle, depth: depth),
+              _buildInlineSpans(
+                cell.children,
+                bodyTextStyle,
+                draw,
+                depth: depth,
+              ),
         ],
   ];
-  return MarkdownTable(headerCells: headerCells, bodyRows: bodyRows);
+  final block = MarkdownBlock(
+    kind: MarkdownBlockKind.table,
+    text: cursor.chars.sublist(start).join(),
+    revealing: revealingSlice(
+      cursor.revealing,
+      start: start,
+      length: cursor.chars.length - start,
+    ),
+    headerCells: headerCells,
+    bodyRows: bodyRows,
+  );
+  return _resolveBlock(draw, block, MarkdownTable(block: block));
 }
 
-/// ノードの並びを [InlineSpan] の並びにする。[depth] は入れ子の深さの上限
-/// ([_maxBlockDepth]) を数えるための引き回し (ブロック側の深さと同じカウンタを
-/// 共有する — `strong`/`em`/`a`/未知タグの入れ子もこれ以上再帰しない安全網)。
+/// Turns a sequence of nodes into a sequence of [InlineSpan]s. [depth] is
+/// threaded through in order to count against the nesting depth limit
+/// ([_maxBlockDepth]) — it shares the same counter as the block side, as a
+/// safety net so that nested `strong`/`em`/`a`/unknown tags do not recurse any
+/// further either.
 ///
-/// 画像記法 (`![alt](href)`) は前処理 ([partial_markdown.dart] の
-/// `_escapeImageMarkers`) が `![` を `\!\[` にエスケープ済みなので、ここに
-/// 画像だけの特別扱いは無い — パーサーが画像にもリンクにもせず、素の文字
-/// (`md.Text`) としてそのまま渡ってくる。
-List<InlineSpan> _buildInlineSpans(List<md.Node>? nodes, _RevealCursor cursor, TextStyle style, {int depth = 0}) {
+/// Image notation (`![alt](href)`) gets no special handling here, because the
+/// preprocessing step (`_escapeImageMarkers` in [partial_markdown.dart]) has
+/// already escaped `![` to `\!\[` — the parser makes it neither an image nor
+/// a link, and it comes through as plain text (`md.Text`) as-is.
+List<InlineSpan> _buildInlineSpans(
+  List<md.Node>? nodes,
+  TextStyle style,
+  _Draw draw, {
+  int depth = 0,
+}) {
   if (nodes == null) return const [];
   final spans = <InlineSpan>[];
   for (final node in nodes) {
-    spans.addAll(_buildInline(node, cursor, style, depth: depth));
+    spans.addAll(_buildInline(node, style, draw, depth: depth));
   }
   return spans;
 }
 
-List<InlineSpan> _buildInline(md.Node node, _RevealCursor cursor, TextStyle style, {int depth = 0}) {
+List<InlineSpan> _buildInline(
+  md.Node node,
+  TextStyle style,
+  _Draw draw, {
+  int depth = 0,
+}) {
   if (node is md.Text) {
-    return _revealSpans(node.text, cursor, style);
+    return _plainSpan(node.text, draw.cursor, style);
   }
   if (node is! md.Element) return const [];
 
   if (depth >= _maxBlockDepth) {
-    // 深さの上限を超えた部分木は、それ以上再帰せず素の文字として描く。
-    return _revealSpans(node.textContent, cursor, style);
+    // A subtree past the depth limit is drawn as plain text without recursing
+    // any further.
+    return _plainSpan(node.textContent, draw.cursor, style);
   }
 
   switch (node.tag) {
     case 'strong':
-      return _buildInlineSpans(node.children, cursor, style.copyWith(fontWeight: FontWeight.w700), depth: depth + 1);
-    case 'em':
-      return _buildInlineSpans(node.children, cursor, style.copyWith(fontStyle: FontStyle.italic), depth: depth + 1);
-    case 'code':
-      // 周囲の style に merge する (下線・太さなど、コード自身が指定しない
-      // ぶんは周囲を引き継ぐ。色・地の色・字体などコードが指定するぶんは
-      // 周囲より優先する)。
-      return _revealSpans(_codeText(node), cursor, style.merge(ReplyTheme.inlineCodeTextStyle));
-    case 'a':
-      final linkStyle = style.copyWith(
-        color: ReplyTheme.linkColor,
-        decoration: TextDecoration.underline,
+      return _buildInlineSpans(
+        node.children,
+        style.copyWith(fontWeight: FontWeight.w700),
+        draw,
+        depth: depth + 1,
       );
-      return _buildInlineSpans(node.children, cursor, linkStyle, depth: depth + 1);
+    case 'em':
+      return _buildInlineSpans(
+        node.children,
+        style.copyWith(fontStyle: FontStyle.italic),
+        draw,
+        depth: depth + 1,
+      );
+    case 'code':
+      // Merge onto the surrounding style (whatever the code style does not
+      // specify itself — underline, weight and so on — is inherited from the
+      // surroundings; whatever it does specify — color, background color,
+      // font family — takes precedence over the surroundings).
+      return _plainSpan(
+        _codeText(node),
+        draw.cursor,
+        draw.replyStyle.resolveInlineCodeTextStyle(style),
+      );
+    case 'a':
+      final linkStyle = draw.replyStyle.resolveLinkTextStyle(style);
+      return _buildInlineSpans(
+        node.children,
+        linkStyle,
+        draw,
+        depth: depth + 1,
+      );
     case 'br':
-      // 自己完結要素 (children が null) の改行。
-      return _revealSpans('\n', cursor, style);
+      // A line break, a self-contained element (children is null).
+      return _plainSpan('\n', draw.cursor, style);
     default:
-      // 対応表に無いタグの安全網。children が null なら何も描かない。
+      // Safety net for tags that are not in the mapping. If children is null,
+      // draw nothing.
       final children = node.children;
       if (children == null) return const [];
-      return _buildInlineSpans(children, cursor, style, depth: depth + 1);
+      return _buildInlineSpans(children, style, draw, depth: depth + 1);
   }
 }
 
@@ -423,62 +722,59 @@ md.Element? _firstElement(List<md.Node>? nodes) {
   return null;
 }
 
-/// `code` 要素の中身 (`Element.text` が作る、Text の子 1 つ) を取り出す。
-String _codeText(md.Element node) =>
-    (node.children ?? const <md.Node>[]).whereType<md.Text>().map((t) => t.text).join();
+/// Extracts the contents of a `code` element (the single Text child that
+/// `Element.text` creates).
+String _codeText(md.Element node) => (node.children ?? const <md.Node>[])
+    .whereType<md.Text>()
+    .map((t) => t.text)
+    .join();
 
-/// `FencedCodeBlockSyntax` がコードブロックの中身の末尾に付ける改行を 1 つ
-/// だけ剥がす (無いと全てのコードブロックが 1 行ぶん高く描かれる)。
+/// Strips just one trailing newline, the one `FencedCodeBlockSyntax` appends
+/// to the end of a code block's contents (without this, every code block is
+/// drawn one line taller).
 String _stripFencedTrailingNewline(String text) =>
     text.endsWith('\n') ? text.substring(0, text.length - 1) : text;
 
-/// [text] の書記素を [cursor] に通し、表示済みの連続区間を 1 つの span に
-/// まとめ、出現中の文字だけを 1 文字 1 span にする (契約: 表示済みのインライン
-/// 1 区間 = AST のテキストノードと完全一致する 1 span)。
-List<InlineSpan> _revealSpans(String text, _RevealCursor cursor, TextStyle style) {
-  if (text.isEmpty) return const [];
-  final spans = <InlineSpan>[];
-  final buffer = StringBuffer();
-  for (final char in text.characters) {
-    final opacity = cursor.consume(char);
-    if (opacity >= 1) {
-      buffer.write(char);
-      continue;
-    }
-    if (buffer.isNotEmpty) {
-      spans.add(TextSpan(text: buffer.toString(), style: style));
-      buffer.clear();
-    }
-    // インラインコードの地の色など、backgroundColor を持つ style は
-    // そのアルファも文字色と同じ不透明度に下げる (でないと出現中の文字の
-    // 地の色だけ先に不透明で現れる)。
-    spans.add(
-      TextSpan(
-        text: char,
-        style: style.copyWith(
-          color: style.color?.withValues(alpha: opacity),
-          backgroundColor: style.backgroundColor?.withValues(alpha: opacity),
-        ),
-      ),
-    );
+/// Extracts the language name from the fence's info string
+/// (`class="language-xxx"`), or null when there is none.
+String? _codeLanguage(md.Element code) {
+  const prefix = 'language-';
+  for (final cls in code.attributes['class']?.split(' ') ?? const <String>[]) {
+    if (cls.startsWith(prefix)) return cls.substring(prefix.length);
   }
-  if (buffer.isNotEmpty) {
-    spans.add(TextSpan(text: buffer.toString(), style: style));
-  }
-  return spans;
+  return null;
 }
 
-/// 可視文字に、共通接頭辞をもとに出現開始時刻を割り当てる走査状態。
+/// Runs the graphemes of [text] through [cursor] and turns them into a single
+/// [TextSpan] with the reveal state not yet applied (the contract: 1 span =
+/// 1 AST text node). [applyReveal] applies the reveal state afterwards.
+List<InlineSpan> _plainSpan(
+  String text,
+  _RevealCursor cursor,
+  TextStyle style,
+) {
+  if (text.isEmpty) return const [];
+  for (final char in text.characters) {
+    cursor.consume(char);
+  }
+  return [TextSpan(text: text, style: style)];
+}
+
+/// The traversal state that assigns reveal start times to the visible
+/// characters, based on the common prefix.
 ///
-/// [now] は現在のフレーム時刻。前フレームの可視文字列 (`previousChars`/
-/// `previousStarts`) との共通接頭辞より後ろの文字は、この [now] を出現開始
-/// 時刻にする (同じフレームで新しく描かれた文字は一斉に出現を始める。表示済み
-/// の文字は前フレームの開始時刻を引き継ぐので出現し直さない)。
+/// [now] is the current frame's timestamp. Characters past the common prefix
+/// with the previous frame's visible text (`previousChars`/`previousStarts`)
+/// take this [now] as their reveal start time (characters newly drawn in the
+/// same frame all start revealing together; already revealed characters carry
+/// over their start time from the previous frame, so they do not reveal
+/// again).
 class _RevealCursor {
   _RevealCursor({
     required this.now,
     required this._previousChars,
     required this._previousStarts,
+    required this.fade,
     this.forceOpaque = false,
   });
 
@@ -486,50 +782,73 @@ class _RevealCursor {
   final List<String> _previousChars;
   final List<Duration> _previousStarts;
 
-  /// true なら、前フレームの可視文字列と比べて変わった位置以降の文字だけを
-  /// 即座に表示済み (不透明度 1) として確定する (Q11: complete が false →
-  /// true に切り替わる最初のフレームだけ使う。変わっていない位置の文字は
-  /// 通常どおり前フレームの出現開始時刻を引き継ぎ、フェード中なら描き直さない
-  /// — sampleReply のように切替の前後で可視文字列が同一なら何も変えない)。
+  /// How fast a character reveals ([StreamingReplyController.style]'s
+  /// `fadeDuration` — see the time-fields split in the [StreamingReplyStyle]
+  /// class doc).
+  final Duration fade;
+
+  /// When true, only the characters from the position where the visible text
+  /// differs from the previous frame onward are settled as revealed
+  /// (opacity 1) immediately (Q11: used only on the first frame where
+  /// complete flips from false to true. Characters at positions that have not
+  /// changed carry over their reveal start time from the previous frame as
+  /// usual and are not redrawn if they are still revealing — when the visible
+  /// text is identical before and after the switch, as with sampleReply,
+  /// nothing changes at all).
   final bool forceOpaque;
 
   int _index = 0;
   bool _matchesPrevious = true;
 
-  /// 出現中 (不透明度 1 未満) の文字が 1 つでもあったか。
+  /// Whether there was at least one revealing character (opacity below 1).
   bool hasRevealing = false;
 
-  /// 今フレームで走査した可視文字 (次フレームの `previousChars` になる)。
+  /// The visible characters traversed in this frame (they become the next
+  /// frame's `previousChars`).
   final List<String> chars = [];
 
-  /// [chars] と対になる出現開始時刻 (次フレームの `previousStarts` になる)。
+  /// The reveal start times paired with [chars] (they become the next frame's
+  /// `previousStarts`).
   final List<Duration> starts = [];
 
-  /// 1 文字進め、その不透明度 (0〜1) を返す。
-  double consume(String char) {
+  /// The revealing characters (opacity below 1) traversed so far, at their
+  /// absolute position within [chars]. A block slices its own range out of
+  /// this with [revealingSlice] once it has finished consuming.
+  final List<RevealingChar> revealing = [];
+
+  /// Advances by one character.
+  void consume(String char) {
     Duration start;
-    // 新しい書記素が古い書記素で始まる (結合文字が届いて古いものを吸収した)
-    // なら同じ文字とみなし、出現開始時刻を引き継ぐ。厳密な一致に絞ると、
-    // 例えば `e` の後に結合文字が届いて `é` になった瞬間に別の文字として
-    // 扱われ、不透明度 0 から描き直されてしまう。
+    // If the new grapheme starts with the old one (a combining mark arrived
+    // and absorbed the old one), treat it as the same character and carry
+    // over its reveal start time. Narrowing this to an exact match would
+    // mean, for example, that the moment a combining mark arrives after `e`
+    // and makes it `é`, it is treated as a different character and redrawn
+    // from opacity 0.
     if (_matchesPrevious &&
         _index < _previousChars.length &&
         char.startsWith(_previousChars[_index])) {
       start = _previousStarts[_index];
     } else {
       _matchesPrevious = false;
-      // Q11: forceOpaque の間は、前フレームの可視文字列と変わった位置
-      // (ここ) 以降の文字だけを即座に表示済みにする。変わっていなければ
-      // 上の分岐で前の出現開始時刻を引き継ぐのでここには来ない。
-      start = forceOpaque ? now - ReplyTheme.fadeDuration : now;
+      // Q11: while forceOpaque is set, only the characters from the position
+      // where the visible text differs from the previous frame (here) onward
+      // are made revealed immediately. If nothing has changed, the branch
+      // above carries over the previous reveal start time, so this point is
+      // never reached.
+      start = forceOpaque ? now - fade : now;
     }
     chars.add(char);
     starts.add(start);
     _index++;
 
     final elapsed = now - start;
-    if (elapsed >= ReplyTheme.fadeDuration) return 1;
-    hasRevealing = true;
-    return revealOpacity(elapsed, ReplyTheme.fadeDuration);
+    final opacity = elapsed >= fade ? 1.0 : revealOpacity(elapsed, fade);
+    if (opacity < 1) {
+      hasRevealing = true;
+      revealing.add(
+        RevealingChar(index: chars.length - 1, char: char, opacity: opacity),
+      );
+    }
   }
 }

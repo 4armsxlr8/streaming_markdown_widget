@@ -1,71 +1,114 @@
 import 'package:flutter/widgets.dart' show StringCharacters;
 
-/// 出現中の 1 文字 (書記素) と、その不透明度。
+/// One character (grapheme) that is mid-reveal, and its opacity.
 ///
-/// [opacity] は 0 (透明) から 1 (不透明) の範囲。出現を始めたがまだ 1 に達して
-/// いない文字だけがこの型で表れる ([RevealClock.revealingAt] を参照)。
+/// [opacity] ranges from 0 (transparent) to 1 (opaque). Only characters that
+/// have started revealing but haven't reached 1 yet appear as this type (see
+/// [RevealClock.revealingAt]).
 class RevealingChar {
-  const RevealingChar({required this.index, required this.char, required this.opacity});
+  const RevealingChar({
+    required this.index,
+    required this.char,
+    required this.opacity,
+  });
 
-  /// 受信した文字列の中での書記素の通し番号 (0 始まり)。
+  /// The grapheme's running index (0-based) within the received text.
   final int index;
 
-  /// この文字そのもの (書記素 1 つ)。
+  /// The character itself (one grapheme).
   final String char;
 
-  /// 不透明度 (0〜1)。
+  /// Opacity (0–1).
   final double opacity;
 }
 
-/// 出現開始からの経過 [elapsed] とフェードにかかる時間 [fade] から、
-/// 不透明度 (0〜1) を計算する。[RevealClock.revealingAt] と描画側
-/// (`revealed_markdown.dart` の `_RevealCursor.consume`) の両方で使う共通の
-/// 勾配。
+/// Computes opacity (0–1) from elapsed time since a character started
+/// revealing ([elapsed]) and the fade duration ([fade]). This is the shared
+/// gradient used by both [RevealClock.revealingAt] and the rendering side
+/// (`_RevealCursor.consume` in `revealed_markdown.dart`).
 double revealOpacity(Duration elapsed, Duration fade) =>
     (elapsed.inMicroseconds / fade.inMicroseconds).clamp(0, 1);
 
-/// 1 文字ずつの出現の時計。
+/// The clock behind revealing characters one at a time.
 ///
-/// 受信した書記素の列を保持し、各文字が出現を始める時刻 (基準値) を割り当てる。
-/// Flutter の Widget に依存しない純 Dart。時刻はすべて [Duration] (経過時間)
-/// で表し、`Widget` や `Ticker` を知らない。
+/// Holds the received sequence of graphemes and assigns each character a
+/// time (a base value) at which it starts revealing. Pure Dart, independent
+/// of Flutter widgets. All times are [Duration] (elapsed time) — this class
+/// knows nothing about `Widget` or `Ticker`.
 ///
-/// 基準の出現間隔は 40 文字/秒 = 25ms。未出現の残り ([pendingCountAt]) が
-/// 追いつきの上限を超えた瞬間、または [fastForward] が呼ばれた瞬間に、
-/// その時点の残りから速さを 1 度だけ決めて割り当て直す
-/// (「切り替わった瞬間の残り」から決め、毎フレーム残りで割り直さない)。
+/// The base reveal interval is 40 characters/sec = 25ms. The moment the
+/// unrevealed backlog ([pendingCountAt]) exceeds the catch-up threshold, or
+/// the moment [fastForward] is called, a speed is decided once from the
+/// backlog at that instant and assigned to the rest (decided from "the
+/// backlog at the moment it kicked in," not recomputed from the backlog on
+/// every frame).
 ///
-/// 塊の境界でサロゲートペアが割れた場合は、書記素が閉じるまで文字数に数えない
-/// ([receivedCount] / [text] に含めない)。
+/// If a surrogate pair is split across a chunk boundary, it isn't counted as
+/// a character ([receivedCount] / [text] exclude it) until the grapheme
+/// closes.
+///
+/// [RevealClock] is not itself public — every time value it needs
+/// ([normalInterval], [catchUpThreshold], [catchUpBudget],
+/// [fastForwardBudget], [minInterval], [fade]) is a required constructor
+/// argument, supplied by [StreamingReplyController] from its own `style` (see
+/// [StreamingReplyController.style]).
 class RevealClock {
-  RevealClock({this.normalInterval = const Duration(microseconds: 25000)});
+  RevealClock({
+    required this.normalInterval,
+    required this.catchUpThreshold,
+    required this.catchUpBudget,
+    required this.fastForwardBudget,
+    required this.minInterval,
+    required this.fade,
+  });
 
-  /// 1 文字の不透明度が 0 から 1 になるまでの基準の時間 (`fade` 引数の既定値。
-  /// `ReplyTheme.fadeDuration` はこれを参照する — 出現の速さの正本はここ)。
-  static const Duration defaultFade = Duration(milliseconds: 300);
-
-  /// 基準の出現間隔 (40 文字/秒)。
+  /// The base reveal interval (40 characters/sec).
   final Duration normalInterval;
 
-  /// 受信した書記素 (サロゲートが閉じているもののみ)。
+  /// Backlog (characters) that triggers catch-up in [scheduleFromArrival].
+  final int catchUpThreshold;
+
+  /// Budget to clear a backlog once catch-up kicks in ([scheduleFromArrival]).
+  final Duration catchUpBudget;
+
+  /// Budget to reveal the remaining characters once streaming completes
+  /// ([fastForward]).
+  final Duration fastForwardBudget;
+
+  /// The fastest interval catch-up ([_scheduleCatchUpTail]) and fast-forward
+  /// ([fastForward]) may shrink to (one character per frame). Their assigned
+  /// interval never drops below this, however large the backlog or however
+  /// short [catchUpBudget] / [fastForwardBudget] is — the backlog may stay
+  /// above [catchUpThreshold] instead.
+  final Duration minInterval;
+
+  /// Time for one character's opacity to go from 0 to 1 ([revealingAt],
+  /// [displayedCountAt]).
+  final Duration fade;
+
+  /// Received graphemes (only ones whose surrogates are closed).
   final List<String> _chars = [];
 
-  /// 各書記素の出現開始時刻。まだ割り当てていない文字は null。
+  /// Each grapheme's reveal start time. Null for a character not yet assigned.
   final List<Duration?> _startTimes = [];
 
-  /// 塊の境界で割れた、まだ閉じていない上位サロゲート 1 文字分。
+  /// A high surrogate split at a chunk boundary that hasn't closed yet.
   String? _danglingHighSurrogate;
 
-  /// 受信した文字数 (書記素。閉じていないサロゲートは数えない)。
+  /// Number of received characters (graphemes; an unclosed surrogate doesn't count).
   int get receivedCount => _chars.length;
 
-  /// 受信した全文 (閉じていないサロゲートは含まない)。
-  String get text => _chars.join();
+  /// The full received text (excludes an unclosed surrogate). Memoized:
+  /// [appendOnly] and [complete] are the only ways [_chars] changes, and both
+  /// invalidate this cache.
+  String? _textCache;
+  String get text => _textCache ??= _chars.join();
 
-  /// 塊の文字列を受信するだけで、出現の割り当ては行わない。
+  /// Receives a chunk's text without assigning reveal times.
   ///
-  /// 思考の畳みを待つ間など、出現を始めさせたくない塊を溜めておくのに使う。
-  /// 割り当ては後で [scheduleFromArrival] や [fastForward] を呼んで行う。
+  /// Used to hold onto chunks that shouldn't start revealing yet — e.g.
+  /// while waiting for the thinking frame to collapse. Assignment happens
+  /// later via [scheduleFromArrival] or [fastForward].
   void appendOnly(String chunkText) {
     final combined = (_danglingHighSurrogate ?? '') + chunkText;
     _danglingHighSurrogate = null;
@@ -73,23 +116,28 @@ class RevealClock {
     var toProcess = combined;
     if (toProcess.isNotEmpty) {
       final lastUnit = toProcess.codeUnitAt(toProcess.length - 1);
-      // 上位サロゲート (U+D800-U+DBFF) で終わっていれば、対になる下位サロゲート
-      // が次の塊で届くまで保留する。
+      // If it ends on a high surrogate (U+D800-U+DBFF), hold it until its
+      // matching low surrogate arrives in the next chunk.
       if (lastUnit >= 0xD800 && lastUnit <= 0xDBFF) {
         _danglingHighSurrogate = toProcess.substring(toProcess.length - 1);
         toProcess = toProcess.substring(0, toProcess.length - 1);
       }
     }
     if (toProcess.isEmpty) return;
+    _textCache = null;
+    _revealedTextCachedCount = null;
 
-    // 直前に受信済みの書記素と新しい塊がくっついて 1 つの書記素になる場合
-    // (ZWJ 連結絵文字・結合文字・肌色修飾・国旗など、塊の境界がその途中で
-    // 割れた場合) に備え、「直前の書記素 + 新しい塊」をまとめて書記素に
-    // 割り直す。先頭の書記素が直前の書記素を吸収していれば、直前の項目を
-    // 置き換える (出現開始時刻 [_startTimes] はそのまま保つ)。
+    // If the previously received grapheme and the new chunk combine into a
+    // single grapheme (ZWJ-joined emoji, combining characters, skin-tone
+    // modifiers, flags, etc. — any case where a chunk boundary split one in
+    // the middle), re-segment "previous grapheme + new chunk" together. If
+    // the first grapheme of that absorbs the previous one, replace the
+    // previous entry (keeping its reveal start time in [_startTimes] as-is).
     var graphemes = toProcess.characters.toList(growable: false);
     if (_chars.isNotEmpty) {
-      final merged = (_chars.last + toProcess).characters.toList(growable: false);
+      final merged = (_chars.last + toProcess).characters.toList(
+        growable: false,
+      );
       if (merged.isNotEmpty && merged.first != _chars.last) {
         _chars[_chars.length - 1] = merged.first;
         graphemes = merged.skip(1).toList(growable: false);
@@ -102,34 +150,40 @@ class RevealClock {
     }
   }
 
-  /// 受信完了を伝える。保留中の (対になる下位サロゲートが来なかった) 上位
-  /// サロゲートがあれば、U+FFFD (置換文字) に変えて 1 文字として受信済みに
-  /// 入れる (受信完了後に永久に消える経路を無くすため)。出現の割り当ては
-  /// 行わない (呼び出し元が [scheduleFromArrival] や [fastForward] で行う)。
+  /// Signals that receiving has finished. If there's a pending high
+  /// surrogate (one whose matching low surrogate never arrived), it's turned
+  /// into U+FFFD (replacement character) and added as one received
+  /// character (so it doesn't permanently disappear after receiving ends).
+  /// Doesn't assign reveal times itself (the caller does that via
+  /// [scheduleFromArrival] or [fastForward]).
   ///
-  /// 戻り値: 保留中の上位サロゲートを確定させた (= この呼び出しで初めて
-  /// 1 文字以上受信した) なら true。呼び出し元 ([StreamingReplyController])
-  /// はこれを見て、通常の到着解決 (思考の開始判定・返答の門開放) を通す。
+  /// Returns: true if this call resolved a pending high surrogate (i.e. this
+  /// is the first time at least one character was received). The caller
+  /// ([StreamingReplyController]) uses this to route it through the normal
+  /// arrival resolution (thinking-start detection, reply gate opening).
   bool complete() {
     if (_danglingHighSurrogate == null) return false;
     _danglingHighSurrogate = null;
     _chars.add('�');
     _startTimes.add(null);
+    _textCache = null;
+    _revealedTextCachedCount = null;
     return true;
   }
 
-  /// 未割り当ての文字 (と、まだ出現していない割り当て済みの文字) に、
-  /// 基準または追いつきの規則で出現開始時刻を割り当てる。
+  /// Assigns reveal start times, by the normal or catch-up rule, to
+  /// unassigned characters (and already-assigned characters that haven't
+  /// started revealing yet).
   ///
-  /// [catchUpThreshold] を超える残りがあれば、[eventTime] の時点の残りから
-  /// 追いつきの速さを 1 度だけ決めて [catchUpBudget] 以内に上限まで戻す。
-  /// 超えなければ、割り当て済みでまだ出現していない文字の列に続けて基準の
-  /// 間隔で割り当てる (無ければ [eventTime] から)。
-  void scheduleFromArrival(
-    Duration eventTime, {
-    int catchUpThreshold = 24,
-    Duration catchUpBudget = const Duration(milliseconds: 600),
-  }) {
+  /// If the backlog exceeds [catchUpThreshold], a catch-up speed is decided
+  /// once from the backlog at [eventTime] and brings it back under the
+  /// threshold within [catchUpBudget] — unless that speed would fall below
+  /// [minInterval], in which case the interval is held at [minInterval] and
+  /// the backlog may stay above the threshold. Otherwise, characters are
+  /// assigned at the normal interval, continuing the queue of
+  /// already-assigned, not-yet-revealed characters (or starting from
+  /// [eventTime] if there is none).
+  void scheduleFromArrival(Duration eventTime) {
     final unassigned = <int>[];
     final outstanding = <int>[];
     for (var i = 0; i < _startTimes.length; i++) {
@@ -137,9 +191,11 @@ class RevealClock {
       if (startTime == null) {
         unassigned.add(i);
       } else if (startTime >= eventTime) {
-        // 同じ到着時刻の文字も、まだ時間が進んで出現を観測されていなければ
-        // 列を継ぐ (等号を含めないと、tick を挟まず同時刻に届いた複数の塊が
-        // すべて到着時刻ちょうどに重なって出現してしまう)。
+        // A character with the same arrival time still joins the queue if
+        // time hasn't advanced past it yet (including equality matters:
+        // without it, multiple chunks that arrive at the same instant
+        // without an intervening tick would all pile onto exactly that
+        // arrival time and reveal simultaneously).
         outstanding.add(i);
       }
     }
@@ -165,44 +221,58 @@ class RevealClock {
     }
   }
 
-  /// まだ出現していない文字 (割り当て済み・未割り当ての両方) を、
-  /// [eventTime] の時点の残りから決めた 1 つの速さで [budget] 以内に出し切る。
+  /// Reveals every not-yet-revealed character (both assigned and
+  /// unassigned) at a single speed, decided from the backlog at [eventTime],
+  /// so they finish within [fastForwardBudget] — unless that would drop
+  /// below [minInterval], in which case the interval is held at [minInterval]
+  /// and the characters are not all revealed within [fastForwardBudget].
   ///
-  /// 受信完了時の早送りと、返答の最初の塊が届いた時点の思考の早送りの
-  /// どちらにも使う。
+  /// Used both for the fast-forward at the end of receiving, and for
+  /// fast-forwarding thinking once the reply's first chunk arrives.
   ///
-  /// 同じ文字が 2 回目の [fastForward] の対象になっても (受信完了までに思考の
-  /// 早送りが 2 度走る場合など)、新しく計算した時刻が既存の割り当てより
-  /// 遅ければ既存を保つ ([min] を取る) — 遅い方を採用すると、1 回目の
-  /// 早送りで [budget] 以内に収まるよう割り当てた文字が、2 回目の (より遅い
-  /// `eventTime` を起点にした) 割り当てで押し流されて期限を超えてしまう。
-  void fastForward(Duration eventTime, {Duration budget = const Duration(milliseconds: 400)}) {
+  /// If the same character becomes the target of a second [fastForward]
+  /// call (e.g. thinking's fast-forward running twice before receiving
+  /// completes), the earlier of the two assigned times wins ([min]) — if the
+  /// later one won instead, a character that the first fast-forward placed
+  /// within [fastForwardBudget] could get pushed past its deadline by the
+  /// second (later-`eventTime`-based) assignment.
+  void fastForward(Duration eventTime) {
     final tail = <int>[];
     for (var i = 0; i < _startTimes.length; i++) {
       final startTime = _startTimes[i];
-      // scheduleFromArrival と同じ理由で等号を含める: eventTime ちょうどに
-      // 出現を始める (始めた) 文字を素通りさせると、そのすぐ後ろの文字が
-      // 同じ eventTime に割り当てられ、2 文字が同時に出現してしまう。
+      // Same reasoning as scheduleFromArrival for including equality: letting
+      // a character that starts (or started) revealing at exactly eventTime
+      // slip through would assign the character right after it to that same
+      // eventTime, making two characters reveal simultaneously.
       if (startTime == null || startTime >= eventTime) tail.add(i);
     }
     if (tail.isEmpty) return;
 
     final normalUs = normalInterval.inMicroseconds.toDouble();
-    final budgetUs = budget.inMicroseconds.toDouble();
-    final intervalUs = (budgetUs / tail.length) < normalUs ? budgetUs / tail.length : normalUs;
+    final budgetUs = fastForwardBudget.inMicroseconds.toDouble();
+    final minUs = minInterval.inMicroseconds.toDouble();
+    final uncappedUs = (budgetUs / tail.length) < normalUs
+        ? budgetUs / tail.length
+        : normalUs;
+    final intervalUs = uncappedUs < minUs ? minUs : uncappedUs;
     for (var j = 0; j < tail.length; j++) {
       final index = tail[j];
-      final candidate = eventTime + Duration(microseconds: (j * intervalUs).round());
+      final candidate =
+          eventTime + Duration(microseconds: (j * intervalUs).round());
       final existing = _startTimes[index];
-      _startTimes[index] = existing == null || candidate < existing ? candidate : existing;
+      _startTimes[index] = existing == null || candidate < existing
+          ? candidate
+          : existing;
     }
   }
 
-  /// [indexes] (昇順、outstanding の後に unassigned) を追いつきの規則で割り当てる。
+  /// Assigns [indexes] (ascending, outstanding before unassigned) by the
+  /// catch-up rule.
   ///
-  /// 先頭の `indexes.length - keepThreshold` 文字は追いつきの速さ、
-  /// 残り [keepThreshold] 文字は基準の速さで、追いつきの最後の文字に続けて
-  /// 割り当てる。
+  /// The first `indexes.length - keepThreshold` characters get the catch-up
+  /// speed (held at [minInterval] when `budget ÷ indexes.length` would fall
+  /// below it); the remaining [keepThreshold] characters get the normal
+  /// speed, continuing right after the last catch-up character.
   void _scheduleCatchUpTail(
     List<int> indexes,
     Duration eventTime, {
@@ -211,10 +281,13 @@ class RevealClock {
   }) {
     final total = indexes.length;
     final catchUpCount = total - keepThreshold;
-    final catchUpIntervalUs = budget.inMicroseconds / total;
+    final uncappedUs = budget.inMicroseconds / total;
+    final minUs = minInterval.inMicroseconds.toDouble();
+    final catchUpIntervalUs = uncappedUs < minUs ? minUs : uncappedUs;
 
     for (var j = 0; j < catchUpCount; j++) {
-      _startTimes[indexes[j]] = eventTime + Duration(microseconds: (j * catchUpIntervalUs).round());
+      _startTimes[indexes[j]] =
+          eventTime + Duration(microseconds: (j * catchUpIntervalUs).round());
     }
 
     var next = _startTimes[indexes[catchUpCount - 1]]! + normalInterval;
@@ -224,7 +297,7 @@ class RevealClock {
     }
   }
 
-  /// [now] 時点で出現を始めている文字数。
+  /// Number of characters that have started revealing as of [now].
   int startedCountAt(Duration now) {
     var count = 0;
     for (final startTime in _startTimes) {
@@ -233,24 +306,31 @@ class RevealClock {
     return count;
   }
 
-  /// [now] 時点でまだ出現していない残り。
+  /// Remaining characters that haven't started revealing as of [now].
   int pendingCountAt(Duration now) => receivedCount - startedCountAt(now);
 
-  /// [now] 時点で出現を始めたがまだ不透明度 1 に達していない文字。index 昇順。
-  List<RevealingChar> revealingAt(Duration now, {Duration fade = defaultFade}) {
+  /// Characters that have started revealing but haven't reached opacity 1 yet,
+  /// as of [now]. Ascending by index.
+  List<RevealingChar> revealingAt(Duration now) {
     final result = <RevealingChar>[];
     for (var i = 0; i < _chars.length; i++) {
       final startTime = _startTimes[i];
       if (startTime == null || startTime > now) continue;
       final elapsed = now - startTime;
       if (elapsed >= fade) continue;
-      result.add(RevealingChar(index: i, char: _chars[i], opacity: revealOpacity(elapsed, fade)));
+      result.add(
+        RevealingChar(
+          index: i,
+          char: _chars[i],
+          opacity: revealOpacity(elapsed, fade),
+        ),
+      );
     }
     return result;
   }
 
-  /// [now] 時点で不透明度が 1 に達した (表示済みの) 文字数。
-  int displayedCountAt(Duration now, {Duration fade = defaultFade}) {
+  /// Number of characters whose opacity has reached 1 (fully revealed) as of [now].
+  int displayedCountAt(Duration now) {
     var count = 0;
     for (final startTime in _startTimes) {
       if (startTime != null && now - startTime >= fade) count++;
@@ -258,14 +338,26 @@ class RevealClock {
     return count;
   }
 
-  /// [now] 時点で出現を始めた分までの文字列 (書記素の境界で切る)。
+  /// The text up through the characters that have started revealing as of
+  /// [now] (cut at a grapheme boundary). Memoized by the count of characters
+  /// that have started (invalidated by [appendOnly] / [complete] through
+  /// [_revealedTextCachedCount]) — repeated calls with the same [now] within
+  /// one frame, or a [now] that hasn't crossed another character's start
+  /// time, reuse the cached string instead of rejoining it.
+  int? _revealedTextCachedCount;
+  String? _revealedTextCache;
+
   String revealedTextAt(Duration now) {
-    final buffer = StringBuffer();
+    var count = 0;
     for (var i = 0; i < _chars.length; i++) {
       final startTime = _startTimes[i];
       if (startTime == null || startTime > now) break;
-      buffer.write(_chars[i]);
+      count++;
     }
-    return buffer.toString();
+    if (_revealedTextCachedCount == count) return _revealedTextCache!;
+    final result = _chars.take(count).join();
+    _revealedTextCachedCount = count;
+    _revealedTextCache = result;
+    return result;
   }
 }

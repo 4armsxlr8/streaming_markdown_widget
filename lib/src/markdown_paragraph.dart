@@ -1,19 +1,31 @@
 import 'package:flutter/widgets.dart';
 
-import 'reply_theme.dart';
+import 'markdown_block.dart';
+import 'streaming_reply_style.dart';
 
-/// 段落 1 つ。
+/// One paragraph.
 class MarkdownParagraph extends StatelessWidget {
-  const MarkdownParagraph({super.key, required this.spans, this.style});
+  const MarkdownParagraph({super.key, required this.block, this.textStyle});
 
-  /// 出現状態を反映済みの段落の中身。
-  final List<InlineSpan> spans;
+  /// This paragraph's content (kind is paragraph).
+  final MarkdownBlock block;
 
-  /// 基準の style (既定は本文)。引用の中の段落はこれを差し替えて呼ぶ。
-  final TextStyle? style;
+  /// The base style (default is body text). A paragraph inside a blockquote
+  /// calls this with an override.
+  final TextStyle? textStyle;
 
   @override
   Widget build(BuildContext context) {
-    return Text.rich(TextSpan(style: style ?? ReplyTheme.bodyTextStyle, children: spans));
+    final style =
+        textStyle ??
+        StreamingReplyStyleScope.of(
+          context,
+        ).resolveBodyTextStyle(DefaultTextStyle.of(context).style);
+    return Text.rich(
+      applyReveal(
+        TextSpan(style: style, children: block.spans!),
+        block.revealing,
+      ),
+    );
   }
 }

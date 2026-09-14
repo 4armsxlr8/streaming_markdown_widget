@@ -2,50 +2,95 @@ import 'package:flutter/rendering.dart' show OverflowBoxFit;
 import 'package:flutter/widgets.dart';
 
 import 'keys.dart';
-import 'reply_theme.dart';
 import 'revealed_markdown.dart';
 import 'streaming_reply_controller.dart';
+import 'streaming_reply_style.dart';
 import 'thinking_shimmer.dart';
 
-/// 思考の枠: 見出し行と本文。
+/// The thinking frame: a headline row and a body.
 ///
-/// 見出し行は、思考が流れている間は光る「考え中…」([ThinkingShimmer])、終わると
-/// 「n 秒考えました」。本文は思考の文を
-/// [RevealedMarkdown] (`kind: thinking`, 記法は整形しない) で描き、
-/// [StreamingReplyController.thinkingFrame] が示す状態 (1 行 / 全部 / 畳み) に
-/// 応じて高さを [AnimatedSize] (300ms) で変える。1 行のときは最新の行 (末尾) を
-/// 見せ、それより前は上に切り詰める。枠全体 (見出し行 + 本文) のタップで
-/// [StreamingReplyController.toggleThinkingFrame] を呼び、1 行 ⇄ 全部
-/// (思考中) / 畳み ⇄ 全部 (畳んだ後) を切り替える。
+/// While the thinking is still arriving, the headline row is a shimmering
+/// "Thinking…" ([ThinkingShimmer]); once it ends, "Thought for n seconds". The
+/// body draws the thinking text with [RevealedMarkdown] (`kind: thinking`,
+/// notation not formatted) and changes its height with [AnimatedSize]
+/// (`controller.style.thinkingCollapseDuration`, not the widget-side
+/// [style]'s — see the time-fields split in the [StreamingReplyStyle] class
+/// doc) according to the state
+/// [StreamingReplyController.thinkingFrame] reports (one line / full /
+/// collapsed). In the one-line state it shows the latest
+/// line (the last one) and cuts off everything before it at the top. A tap
+/// anywhere on the frame (headline row + body) calls
+/// [StreamingReplyController.toggleThinkingFrame], switching one line ⇄ full
+/// (while thinking) / collapsed ⇄ full (after it has been collapsed).
 class ThinkingFrame extends StatelessWidget {
-  const ThinkingFrame({super.key, required this.controller});
+  const ThinkingFrame({
+    super.key,
+    required this.controller,
+    this.style,
+    this.thinkingTitle = '…',
+    this.thoughtForSeconds,
+  });
 
-  /// 思考の枠の状態の入り口。
+  /// Entry point for the thinking frame's state.
   final StreamingReplyController controller;
 
-  /// 思考が流れている間の見出し行の文言 (三点リーダは U+2026)。
-  static const _thinkingTitle = '考え中…';
+  /// Look-and-feel values (the defaults when omitted). Passed down through an
+  /// InheritedWidget ([StreamingReplyStyleScope]).
+  final StreamingReplyStyle? style;
+
+  /// Headline shown while thinking is streaming, and still shown afterward
+  /// if [thoughtForSeconds] is null.
+  final String thinkingTitle;
+
+  /// Builds the headline shown once thinking has finished, given the
+  /// measured (or overridden) [StreamingReplyController.thinkingSeconds].
+  /// Null keeps showing [thinkingTitle] even after thinking ends.
+  final String Function(int seconds)? thoughtForSeconds;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: controller,
+    builder: (context, _) => _buildFrame(context),
+  );
+
+  /// Assembles one frame from [controller]'s state (called from the
+  /// [AnimatedBuilder]'s builder — so that even placed on its own it rebuilds
+  /// on a change in [controller], such as the thinking frame's state or the
+  /// second count being settled. Harmless if it ends up doubled with the outer
+  /// `AnimatedBuilder` on the composed Widget ([StreamingReply]) side).
+  Widget _buildFrame(BuildContext context) {
+    final effectiveStyle = style ?? StreamingReplyStyleScope.of(context);
+    final ambient = DefaultTextStyle.of(context).style;
+    final resolvedThinkingHeadTextStyle = effectiveStyle
+        .resolveThinkingHeadTextStyle(ambient);
     final state = controller.thinkingFrame;
     final isThinking = controller.isThinking;
     final isExpanded = state == ThinkingFrameState.full;
 
-    // thinkingSeconds が未確定の間は作り物の 0 秒を出さず「考え中…」を
-    // 出し続ける (確定は controller.tick の到着解決を待つ必要がある。例えば
-    // framesPaused 中に complete() が呼ばれると、畳み ([thinkingFrame] が
-    // collapsed になる) が先に済んで秒数の確定が後追いになることがある)。
+    // While thinkingSeconds is not settled yet, keep showing "Thinking…"
+    // instead of putting out a made-up 0 seconds (settling it has to wait for
+    // controller.tick to resolve the arrivals. If complete() is called while
+    // framesPaused, for instance, the collapse ([thinkingFrame] becoming
+    // collapsed) can finish first and the second count only be settled
+    // afterwards).
     final thinkingSeconds = controller.thinkingSeconds;
-    final title = isThinking || thinkingSeconds == null
-        ? _thinkingTitle
-        : '$thinkingSeconds 秒考えました';
+    final thoughtForSeconds = this.thoughtForSeconds;
+    final title =
+        isThinking || thinkingSeconds == null || thoughtForSeconds == null
+        ? thinkingTitle
+        : thoughtForSeconds(thinkingSeconds);
 
-    // 思考の文 1 行の高さ。OS の文字サイズ設定 (textScaler) を掛ける
-    // (掛けないと 100% 以外の設定で 1 行の表示が文字の高さより低く切れる)。
+    // The height of one line of thinking text. Multiplied by the OS text size
+    // setting (textScaler) — without that, at any setting other than 100% the
+    // one-line display is cut shorter than the height of the characters.
+    final resolvedThinkingTextStyle = effectiveStyle.resolveThinkingTextStyle(
+      ambient,
+    );
     final oneLineHeight =
-        MediaQuery.textScalerOf(context).scale(ReplyTheme.thinkingFontSize) *
-        ReplyTheme.thinkingHeight;
+        MediaQuery.textScalerOf(
+          context,
+        ).scale(resolvedThinkingTextStyle.fontSize ?? 14) *
+        (resolvedThinkingTextStyle.height ?? 1.0);
 
     final double maxBodyHeight;
     if (isExpanded) {
@@ -56,77 +101,103 @@ class ThinkingFrame extends StatelessWidget {
       maxBodyHeight = 0;
     }
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: controller.toggleThinkingFrame,
-      child: Container(
-        key: Keys.thinkingFrame,
-        padding: const EdgeInsets.only(left: ReplyTheme.thinkingFrameIndent),
-        decoration: const BoxDecoration(
-          border: Border(
-            left: BorderSide(
-              color: ReplyTheme.thinkingFrameBorderColor,
-              width: ReplyTheme.thinkingFrameBorderWidth,
-            ),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            GestureDetector(
-              key: Keys.thinkingFrameHead,
-              behavior: HitTestBehavior.opaque,
-              onTap: controller.toggleThinkingFrame,
-              child: Row(
-                children: [
-                  Flexible(
-                    child: isThinking
-                        ? ThinkingShimmer(
-                            textKey: Keys.thinkingFrameTitle,
-                            text: title,
-                            style: ReplyTheme.thinkingHeadTextStyle,
-                          )
-                        : Text(
-                            title,
-                            key: Keys.thinkingFrameTitle,
-                            style: ReplyTheme.thinkingHeadTextStyle,
-                          ),
-                  ),
-                ],
+    return StreamingReplyStyleScope(
+      style: effectiveStyle,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: controller.toggleThinkingFrame,
+        // The screen-reader button is put up on the headline row
+        // (Keys.thinkingFrameHead) only — the whole frame carries the same
+        // onTap, so without excluding it here there would be two tappable
+        // targets side by side (VoiceOver focus would land on it twice).
+        excludeFromSemantics: true,
+        child: Container(
+          key: Keys.thinkingFrame,
+          padding: EdgeInsets.only(left: effectiveStyle.thinkingFrameIndent),
+          decoration: BoxDecoration(
+            border: Border(
+              left: BorderSide(
+                color: effectiveStyle.thinkingFrameBorderColor,
+                width: effectiveStyle.thinkingFrameBorderWidth,
               ),
             ),
-            AnimatedSize(
-              key: Keys.thinkingFrameBody,
-              duration: ReplyTheme.thinkingCollapseDuration,
-              curve: Curves.fastOutSlowIn,
-              alignment: Alignment.topLeft,
-              child: ConstrainedBox(
-                // maxHeight が有限なら本文はその高さで打ち切られ (OverflowBox が
-                // bottomLeft で最新の行を下端にそろえ、ClipRect が上をはみ出させ
-                // ない)、無限大なら子の自然な高さに合わせるので全文が見える。
-                // 中身 (RevealedMarkdown) には minHeight:0/maxHeight:infinity を
-                // 渡し、この箱の高さに関わらず常に自然な (複数行ぶんの) 高さで
-                // 測らせる — 本文の箱の高さだけを切り詰め、出現の状態を持つ
-                // RevealedMarkdown 自体は 1 行/全部/畳みの間で同じ形のまま保つ。
-                constraints: BoxConstraints(maxHeight: maxBodyHeight),
-                child: ClipRect(
-                  child: OverflowBox(
-                    alignment: Alignment.bottomLeft,
-                    minHeight: 0,
-                    maxHeight: double.infinity,
-                    fit: OverflowBoxFit.deferToChild,
-                    child: RevealedMarkdown(
-                      key: Keys.thinkingText,
-                      controller: controller,
-                      kind: ChunkKind.thinking,
-                      formatted: false,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Make this operable as a button from the screen reader (tap to
+              // expand or collapse). The GestureDetector's own semantics are
+              // excluded (excludeFromSemantics) and this Semantics is put up
+              // with button:true instead — without the exclusion, the
+              // GestureDetector's own tap node (which has no isButton) is
+              // found first and it never becomes a button.
+              Semantics(
+                button: true,
+                onTap: controller.toggleThinkingFrame,
+                child: GestureDetector(
+                  key: Keys.thinkingFrameHead,
+                  behavior: HitTestBehavior.opaque,
+                  excludeFromSemantics: true,
+                  onTap: controller.toggleThinkingFrame,
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: isThinking
+                            ? ThinkingShimmer(
+                                textKey: Keys.thinkingFrameTitle,
+                                text: title,
+                                style: resolvedThinkingHeadTextStyle,
+                              )
+                            : Text(
+                                title,
+                                key: Keys.thinkingFrameTitle,
+                                style: resolvedThinkingHeadTextStyle,
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              AnimatedSize(
+                key: Keys.thinkingFrameBody,
+                // The controller's own style, not effectiveStyle — see the
+                // class doc and StreamingReplyController.style.
+                duration: controller.style.thinkingCollapseDuration,
+                curve: Curves.fastOutSlowIn,
+                alignment: Alignment.topLeft,
+                child: ConstrainedBox(
+                  // A finite maxHeight cuts the body off at that height (the
+                  // OverflowBox aligns the latest line to the bottom edge
+                  // with bottomLeft, and the ClipRect keeps the top from
+                  // spilling out); an infinite one follows the child's
+                  // natural height, so the whole text is visible. The
+                  // contents (RevealedMarkdown) are handed
+                  // minHeight:0/maxHeight:infinity so that they are always
+                  // measured at their natural (multi-line) height regardless
+                  // of this box's height — only the height of the body's box
+                  // is cut down, while RevealedMarkdown itself, which holds
+                  // the reveal state, keeps the same shape across one
+                  // line/full/collapsed.
+                  constraints: BoxConstraints(maxHeight: maxBodyHeight),
+                  child: ClipRect(
+                    child: OverflowBox(
+                      alignment: Alignment.bottomLeft,
+                      minHeight: 0,
+                      maxHeight: double.infinity,
+                      fit: OverflowBoxFit.deferToChild,
+                      child: RevealedMarkdown(
+                        key: Keys.thinkingText,
+                        controller: controller,
+                        kind: ChunkKind.thinking,
+                        formatted: false,
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

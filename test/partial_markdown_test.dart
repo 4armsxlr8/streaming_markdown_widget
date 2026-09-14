@@ -1,9 +1,16 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:markdown/markdown.dart';
 import 'package:streaming_markdown_widget/src/partial_markdown.dart';
+// AC-6 は公開入口から呼べることそのものを主張するので、`src/` 経由で同じ名前が
+// 見えていても公開入口の側が使われるように接頭辞を付けて import する。
+import 'package:streaming_markdown_widget/streaming_markdown_widget.dart'
+    as pkg;
+
+import 'helpers/markdown_html.dart' show renderRawHtml, visibleTextOf;
 
 /// 書きかけの記法を閉じる前処理と、その結果の parse のテスト
-/// (AC-7, AC-8, AC-9, AC-10, AC-12)。
+/// (前の spec の AC-7, AC-8, AC-9, AC-10, AC-12 と、公開入口から単体で呼ぶ
+/// この spec の AC-6)。
 ///
 /// spec の受け入れ基準では seam が「返答の Widget」だが、これらの AC が言う
 /// 「`**` の文字は無い」「生の `|` `---` は無い」は、パーサーに渡す前に
@@ -33,6 +40,18 @@ void main() {
 
   /// 書きかけの本体 2 行目 (行末の `|` がまだ届いていない)。
   const tablePartialBodyLine = '| d | e';
+
+  /// AC-6 で単体の呼び出しに渡す、書きかけの記法の入力 (このファイルの
+  /// AC-7〜10・12 のケースから 1 つずつ)。どれも画像記法を含まないので、
+  /// 受信完了を指定した呼び出しでは 1 文字も変わらないはず。
+  const partialCases = <String>[
+    '**画面',
+    '```dart\nListView.builder(',
+    '[公式ドキュメント](https://do',
+    tableHeaderLine,
+    '$tableHeaderLine\n$tableDelimiterLine',
+    '*',
+  ];
 
   /// 見出し行だけの表 (`<tbody>` に行が無い)。
   const tableWithHeaderOnlyHtml = '''<table>
@@ -119,7 +138,8 @@ void main() {
     expect(
       renderHtml(tableHeaderLine),
       isEmpty,
-      reason: '区切り行が同じ列数そろって届くまでは見出し行ごと落とす '
+      reason:
+          '区切り行が同じ列数そろって届くまでは見出し行ごと落とす '
           '(そのまま渡すと 7.3.1 は生の | を含む段落にする)',
     );
   });
@@ -134,7 +154,9 @@ void main() {
 
   test('AC-10 本体 1 行が閉じると、見出し + 1 行の表になる', () {
     expect(
-      renderHtml('$tableHeaderLine\n$tableDelimiterLine\n$tableClosedBodyLine\n'),
+      renderHtml(
+        '$tableHeaderLine\n$tableDelimiterLine\n$tableClosedBodyLine\n',
+      ),
       tableWithOneRowHtml,
       reason: '行末の | とその後の改行が届いて閉じた本体行は残す',
     );
@@ -146,7 +168,8 @@ void main() {
         '$tableHeaderLine\n$tableDelimiterLine\n$tableClosedBodyLine\n$tablePartialBodyLine',
       ),
       tableWithOneRowHtml,
-      reason: '閉じていない末尾の行は落とす (そのまま渡すと 7.3.1 は d と e を空セルで埋めた行にする)。'
+      reason:
+          '閉じていない末尾の行は落とす (そのまま渡すと 7.3.1 は d と e を空セルで埋めた行にする)。'
           'd と e は現れず、行数も増えない',
     );
   });
@@ -158,7 +181,8 @@ void main() {
     expect(
       html,
       isEmpty,
-      reason: '中身がまだ 1 文字も届いていない末尾の開き記号は閉じるのではなく落とす '
+      reason:
+          '中身がまだ 1 文字も届いていない末尾の開き記号は閉じるのではなく落とす '
           '(そのまま渡すと 7.3.1 は中身の無い箇条書きの点にする)',
     );
   });
@@ -169,5 +193,41 @@ void main() {
       '<p><strong>画</strong></p>',
       reason: '中身が 1 文字届いた時点で開き記号を閉じる',
     );
+  });
+
+  test('AC-6 書きかけの記法を閉じる前処理は公開入口から単体で呼べ、Widget の通り道と同じ閉じた文字列を返す', () {
+    for (final partial in partialCases) {
+      expect(
+        renderRawHtml(pkg.closePartialMarkdown(partial)),
+        renderHtml(partial),
+        reason:
+            '「$partial」: 単体で閉じてから自分で parse した結果が、'
+            'Widget の通り道 (前処理 + parse) と同じになる',
+      );
+    }
+    expect(
+      pkg.closePartialMarkdown('**画面'),
+      isNot('**画面'),
+      reason: '受信中の呼び出しは書きかけの記法を実際に閉じる (入力をそのまま返さない)',
+    );
+  });
+
+  test('AC-6 受信完了を指定した前処理は何も閉じず、画像記法のエスケープだけを行う', () {
+    for (final partial in partialCases) {
+      expect(
+        pkg.closePartialMarkdown(partial, complete: true),
+        partial,
+        reason: '「$partial」: 受信完了後の呼び出しは書きかけの記法を閉じない',
+      );
+    }
+
+    const image = '![代替テキスト](https://example.com/a.png)';
+    final escaped = pkg.closePartialMarkdown(image, complete: true);
+    expect(escaped, isNot(image), reason: '受信完了後でも画像記法はエスケープする');
+
+    final html = renderRawHtml(escaped);
+    expect(html, isNot(contains('<img')), reason: '画像にならない');
+    expect(html, isNot(contains('<a ')), reason: 'リンクにもならない');
+    expect(visibleTextOf(html), image, reason: '画像記法は整形されず記号のままの文字として出る');
   });
 }
