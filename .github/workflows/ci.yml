@@ -15,7 +15,7 @@ jobs:
           # Pinned to the SDK the package is developed and formatted with:
           # `dart format --set-exit-if-changed` differs between formatter
           # versions, and a newer stable rewrites analysis_options.yaml.
-          flutter-version: 3.44.6
+          flutter-version: 3.47.4
           channel: stable
           cache: true
       - run: flutter --version

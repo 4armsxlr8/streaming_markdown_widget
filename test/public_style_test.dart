@@ -172,11 +172,9 @@ void main() {
         '一つ目の段落。二つ目の段落。',
         reason: '前提: 16 文字すべてが出現し終わっている',
       );
-      expect(
-        spans.map((span) => span.style?.color).toSet(),
-        <Color>{textColor},
-        reason: '描かれた文字の色は渡した色 (初期値の $defaultTextColor ではない)',
-      );
+      expect(spans.map((span) => span.style?.color).toSet(), <Color>{
+        textColor,
+      }, reason: '描かれた文字の色は渡した色 (初期値の $defaultTextColor ではない)');
       expect(
         spans.map((span) => span.style?.fontSize).toSet(),
         <double>{bodyFontSize},
@@ -184,16 +182,12 @@ void main() {
             '描かれた文字の大きさは渡した文字サイズ '
             '(初期値の $defaultBodyFontSize ではない)',
       );
-      expect(
-        spans.map((span) => span.style?.fontWeight).toSet(),
-        <FontWeight>{bodyFontWeight},
-        reason: '描かれた文字の太さは渡した太さ (初期値の本文は太さを持たない)',
-      );
-      expect(
-        spans.map((span) => span.style?.letterSpacing).toSet(),
-        <double>{bodyLetterSpacing},
-        reason: '描かれた文字の字間は渡した字間 (初期値の本文は字間を持たない)',
-      );
+      expect(spans.map((span) => span.style?.fontWeight).toSet(), <FontWeight>{
+        bodyFontWeight,
+      }, reason: '描かれた文字の太さは渡した太さ (初期値の本文は太さを持たない)');
+      expect(spans.map((span) => span.style?.letterSpacing).toSet(), <double>{
+        bodyLetterSpacing,
+      }, reason: '描かれた文字の字間は渡した字間 (初期値の本文は字間を持たない)');
       expect(
         paragraphGap(tester),
         closeTo(blockSpacing, tolerance),
@@ -218,11 +212,9 @@ void main() {
     expect(spans.map((span) => span.style?.color).toSet(), <Color>{
       defaultTextColor,
     }, reason: '省略時の文字色は今のサンプルと同じ');
-    expect(
-      spans.map((span) => span.style?.fontSize).toSet(),
-      <double>{defaultBodyFontSize},
-      reason: '省略時の文字サイズは今のサンプルと同じ',
-    );
+    expect(spans.map((span) => span.style?.fontSize).toSet(), <double>{
+      defaultBodyFontSize,
+    }, reason: '省略時の文字サイズは今のサンプルと同じ');
     expect(
       paragraphGap(tester),
       closeTo(defaultBlockSpacing, tolerance),
@@ -273,31 +265,21 @@ void main() {
       expect(displayed, isNotEmpty, reason: '前提: 表示済みの文字がある');
       expect(revealing, isNotEmpty, reason: '前提: 出現中の文字がある');
 
-      expect(
-        spans.map((span) => span.style?.fontFamily).toSet(),
-        <String>{ambientFontFamily},
-        reason: '本文の TextStyle にフォント名が無いので、表示済みも出現中も周囲のフォント名で描かれる',
-      );
-      expect(
-        spans.map((span) => span.style?.letterSpacing).toSet(),
-        <double>{ambientLetterSpacing},
-        reason: '本文の TextStyle に字間が無いので、表示済みも出現中も周囲の字間で描かれる',
-      );
-      expect(
-        spans.map((span) => span.style?.fontSize).toSet(),
-        <double>{inheritedFontSize},
-        reason: '本文の TextStyle に指定した文字サイズは周囲に上書きされない',
-      );
-      expect(
-        displayed.map((span) => span.style?.color).toSet(),
-        <Color>{defaultTextColor},
-        reason: '周囲も本文の TextStyle も文字色を持たないので、初期値の文字色で埋まる',
-      );
-      expect(
-        revealing.map(opaqueColorOf).toSet(),
-        <Color>{defaultTextColor},
-        reason: '出現中の 1 文字も同じ初期値の文字色 (不透明度だけがアルファに乗る)',
-      );
+      expect(spans.map((span) => span.style?.fontFamily).toSet(), <String>{
+        ambientFontFamily,
+      }, reason: '本文の TextStyle にフォント名が無いので、表示済みも出現中も周囲のフォント名で描かれる');
+      expect(spans.map((span) => span.style?.letterSpacing).toSet(), <double>{
+        ambientLetterSpacing,
+      }, reason: '本文の TextStyle に字間が無いので、表示済みも出現中も周囲の字間で描かれる');
+      expect(spans.map((span) => span.style?.fontSize).toSet(), <double>{
+        inheritedFontSize,
+      }, reason: '本文の TextStyle に指定した文字サイズは周囲に上書きされない');
+      expect(displayed.map((span) => span.style?.color).toSet(), <Color>{
+        defaultTextColor,
+      }, reason: '周囲も本文の TextStyle も文字色を持たないので、初期値の文字色で埋まる');
+      expect(revealing.map(opaqueColorOf).toSet(), <Color>{
+        defaultTextColor,
+      }, reason: '出現中の 1 文字も同じ初期値の文字色 (不透明度だけがアルファに乗る)');
     },
   );
 
