@@ -1,5 +1,8 @@
 # pub.dev のアーカイブから除外するもの (.gitignore の代わりに使われる)。
 
+# README 用の画像 (GitHub から参照する。アーカイブには入れない)
+/doc/
+
 # 生成物
 /build/
 /coverage/

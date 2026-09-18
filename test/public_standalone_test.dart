@@ -5,13 +5,16 @@ import 'package:streaming_markdown_widget/streaming_markdown_widget.dart';
 
 import 'helpers/reveal.dart';
 
-/// 1 区分の Widget を単体で置いたときに出現が進むことのテスト (AC-4, AC-23)。
+/// 1 区分の Widget を単体で置いたときに出現が進むことのテスト
+/// (AC-4, AC-23, AC-28)。
 ///
-/// ここで主張するのは 2 つ — 利用側が時計を回す部品 (合成 Widget) を
+/// ここで主張するのは 3 つ — 利用側が時計を回す部品 (合成 Widget) を
 /// 組まなくても、[RevealedMarkdown] / [ThinkingFrame] を単体で置いただけで
 /// 出現が進み、表示済みが増えること (AC-4)。そして [ThinkingFrame] は単体でも
 /// 枠の状態を自分で進めること — 思考中は本文が 1 行の高さを持ち、思考が終わると
-/// 畳まれて見出し行が「n 秒考えました」になる (AC-23)。出現の間隔・追いつき・早送りの規則
+/// 畳まれて見出し行が「n 秒考えました」になる (AC-23)。そして枠の開閉のカーブが
+/// Widget 側の基準値で差し替えられ、畳みの時間そのものは Controller 側の
+/// `thinkingCollapseDuration` のままであること (AC-28)。出現の間隔・追いつき・早送りの規則
 /// そのものは `streaming_reply_controller_test.dart` と
 /// `revealed_markdown_test.dart` が固定しているのでここでは繰り返さない。
 /// 合成 Widget ([StreamingReply]) で包んだ従来の形は
@@ -254,6 +257,116 @@ void main() {
       bodyHeight(tester),
       lessThanOrEqualTo(heightTolerance),
       reason: '思考が終わると本文は畳まれて高さが 0 に戻る',
+    );
+  });
+
+  // ── 思考の枠の開閉のカーブ (AC-28) ──
+
+  /// 開閉のカーブを見るときの畳みの時間 (100 フレームぶん)。
+  ///
+  /// 既定の 300ms では半分が 9 フレームしかなく、1 フレームのずれが高さの 5% を
+  /// 動かしてしまう。長くしておけば、半分の時点のずれは高さの 1% に収まる。
+  /// 畳みの時間は今までどおり Controller 側の [StreamingReplyStyle] から
+  /// 読まれるので、渡すのも Controller 側。
+  const slowCollapseDuration = Duration(milliseconds: 1600);
+
+  /// [slowCollapseDuration] の半分のフレーム数 (1600ms ÷ 16ms ÷ 2)。
+  const halfCollapseFrames = 50;
+
+  /// 畳みが始まるまでに進めるフレーム数の上限 (早送りの 400ms + 余裕)。
+  const maxCollapseWaitFrames = 60;
+
+  /// 思考を流し終えて畳みに入り、畳みの時間の半分まで進める。
+  ///
+  /// 返すのは畳みに入る前の高さ (start) と、半分の時点の高さ (half)。[style] は
+  /// 思考の枠に渡す Widget 側の基準値 (省略すると渡さない = 既定)。
+  ///
+  /// 畳みが始まるのは早送りが終わってからなので、時刻で決め打ちせず、枠の状態が
+  /// 畳みに変わったフレームを探してそこから数える ([AnimatedSize] はその
+  /// フレームのレイアウトで動き始め、まだ畳み前の高さを描いている)。
+  Future<({double start, double half})> collapseHalfway(
+    WidgetTester tester, {
+    StreamingReplyStyle? style,
+  }) async {
+    final controller = StreamingReplyController(
+      style: StreamingReplyStyle(
+        thinkingCollapseDuration: slowCollapseDuration,
+      ),
+    );
+    await pumpStandalone(
+      tester,
+      ThinkingFrame(controller: controller, style: style),
+    );
+
+    await pumpFrames(tester, frameInterval);
+    controller.addChunk(const Chunk(thinkingText, kind: ChunkKind.thinking));
+    await tester.pump();
+
+    // 本文の箱が 0 から 1 行の高さへ伸びるのにも同じ時間がかかるので、
+    // 伸びきるまで進めてから畳み前の高さを測る。
+    await pumpFrames(tester, slowCollapseDuration + frameInterval * 4);
+    final start = bodyHeight(tester);
+    expect(
+      start,
+      closeTo(oneLineHeight, heightTolerance),
+      reason: '前提: 畳みに入る前の本文は 1 行の高さ',
+    );
+
+    controller.complete();
+    await tester.pump();
+
+    var waited = 0;
+    while (controller.thinkingFrame != ThinkingFrameState.collapsed) {
+      await tester.pump(frameInterval);
+      waited++;
+      expect(
+        waited,
+        lessThan(maxCollapseWaitFrames),
+        reason: '前提: 受信完了のあと早送りが終わると枠が畳みに入る',
+      );
+    }
+    expect(
+      bodyHeight(tester),
+      closeTo(start, heightTolerance),
+      reason: '前提: 畳みに入った最初のフレームではまだ畳み前の高さ',
+    );
+
+    await pumpFrames(tester, frameInterval * halfCollapseFrames);
+    return (start: start, half: bodyHeight(tester));
+  }
+
+  testWidgets('AC-28 開閉のカーブに Curves.linear を渡して思考を流し終え、'
+      '畳みの時間の半分まで進めると、枠の高さが線形の中間値 (畳み前と畳み後の中点) になる', (tester) async {
+    final heights = await collapseHalfway(
+      tester,
+      style: StreamingReplyStyle(thinkingCollapseCurve: Curves.linear),
+    );
+
+    expect(
+      heights.half,
+      closeTo(heights.start / 2, heightTolerance),
+      reason:
+          '線形のカーブなら、畳みの時間の半分の時点の高さも中点 '
+          '(畳み前の高さと畳み後の 0 の中点) になる。畳みの時間は Widget 側に'
+          '渡した基準値ではなく Controller 側の thinkingCollapseDuration のまま',
+    );
+  });
+
+  testWidgets('AC-28 開閉のカーブを渡さずに思考を流し終え、畳みの時間の半分まで進めると、'
+      '既定 (fastOutSlowIn) では枠の高さが中点と異なる', (tester) async {
+    final heights = await collapseHalfway(tester);
+
+    expect(
+      heights.half,
+      isNot(closeTo(heights.start / 2, heightTolerance)),
+      reason: '既定の fastOutSlowIn は序盤が速いので、半分の時点の高さは中点にならない',
+    );
+    expect(
+      heights.half,
+      inExclusiveRange(0, heights.start),
+      reason:
+          '中点と違うのは畳みの途中だからで、畳み終わっている (高さ 0) からではない。'
+          '畳みの時間は Controller 側の thinkingCollapseDuration のまま',
     );
   });
 }

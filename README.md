@@ -1,5 +1,7 @@
 # streaming_markdown_widget
 
+![Demo](doc/demo.gif)
+
 A Flutter package that reveals streaming Markdown one character at a time while keeping it formatted, with a collapsible thinking frame above the reply. Built for AI chat screens where the reply arrives a few characters at a time and still has to render as headings, lists, code blocks, and tables while it's receiving.
 
 ## Installation
@@ -134,7 +136,7 @@ The text a screen reader gets for the reply and for the thinking frame is always
 
 `StreamingReplyStyle` holds every look-and-feel and timing value. It's not `const`-constructible — the constructor validates every value and throws `ArgumentError` on an invalid one (see [Invalid values](#invalid-values)).
 
-Pass it in two places: to `StreamingReplyController(style:)` for the reveal timing (`revealInterval`, `fadeDuration`, `catchUpBudget`, `fastForwardBudget`, `minRevealInterval`, `thinkingCollapseDuration`), and to `StreamingReply`/`RevealedMarkdown`/`ThinkingFrame`'s `style:` for everything else (colors, typography, spacing, shimmer/waiting-dot timing). These are two separate instances — the time values shown on screen (the fade-in speed, the thinking frame's collapse animation, and so on) are read from the instance passed to the controller (`controller.style`); the same-named time fields on the Widget-side `style` are ignored. Pass the same values to both (or share one instance) so the two stay in sync.
+Pass it in two places: to `StreamingReplyController(style:)` for the reveal timing (`revealInterval`, `fadeDuration`, `catchUpBudget`, `fastForwardBudget`, `minRevealInterval`, `thinkingCollapseDuration`), and to `StreamingReply`/`RevealedMarkdown`/`ThinkingFrame`'s `style:` for everything else (colors, typography, spacing, shimmer/waiting-dot timing, the thinking frame's collapse curve (`thinkingCollapseCurve`)). These are two separate instances — the time values shown on screen (the fade-in speed, the thinking frame's collapse animation, and so on) are read from the instance passed to the controller (`controller.style`); the same-named time fields on the Widget-side `style` are ignored. Pass the same values to both (or share one instance) so the two stay in sync.
 
 ```dart
 final style = StreamingReplyStyle(revealInterval: Duration(milliseconds: 20));
@@ -171,10 +173,10 @@ Zero margins and 0/1 opacities are valid.
 ## Running the example
 
 ```sh
-flutter run -d "iPhone 16" --dart-define=GEMINI_API_KEY=your-key --dart-define=GEMINI_MODEL=gemini-3.8-flash
+flutter run -d "iPhone 16" --dart-define-from-file=.env.local
 ```
 
-Both `--dart-define` values are optional — without a key, the example still runs against its fake supply, just with the real-Gemini switch disabled. With a key, if Gemini's `finishReason` ever comes back as anything other than `STOP` (a safety block, `MAX_TOKENS`, …), the reply ends empty and the screen shows an error instead.
+Both values are for local development only — never distribute a build with a key baked in. Prefer `--dart-define-from-file=.env.local` (a gitignored file, `GEMINI_API_KEY=...` and optionally `GEMINI_MODEL=...` on their own lines) over an inline `--dart-define=GEMINI_API_KEY=...`, which stays in your shell history. Without a key, sending shows your typed question in the bubble with the fake supply's sample reply; replaying plays the sample question and reply again from the start. A key can also be entered at runtime through the AppBar's key icon — that copy lives in memory only (never written to disk, cleared when the app closes) and never shown on screen; clearing it there switches sending back to the fake supply. With a key set, sending goes once to Gemini and replay resends the last question; if Gemini's `finishReason` ever comes back as anything other than `STOP` (a safety block, `MAX_TOKENS`, …), the reply ends with whatever arrived and the screen shows an error line instead.
 
 ## Limitations
 

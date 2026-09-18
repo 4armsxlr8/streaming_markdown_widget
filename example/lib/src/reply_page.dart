@@ -3,133 +3,135 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:streaming_markdown_widget/streaming_markdown_widget.dart';
 
+import 'app.dart';
 import 'fake_reply_source.dart';
 import 'gemini_reply_source.dart';
 import 'keys.dart';
 import 'sample_reply.dart';
 
-/// The page background color.
+/// The page background, and the AppBar's flat background (mock:
+/// `--demo4-page-bg`, `appBarStyle: flat`).
 const _pageBackground = Color(0xFFF1F2F4);
 
-/// Padding of the reply's vertical scroll area (`.demo3-body`'s
-/// `padding: 10px 16px 24px`).
-const _pagePadding = EdgeInsets.fromLTRB(16, 10, 16, 24);
-
-/// Gap between the reply and the replay button (`.demo3-retry-btn`'s
-/// `margin: 14px auto 0`).
-const _actionsSpacingTop = 14.0;
-
-/// Top switch pill (`.demo3-topbar` / `.demo3-segment`).
-const _topbarPadding = EdgeInsets.fromLTRB(16, 14, 16, 4);
-const _segmentBackground = Color(0xFFE2E4E9);
-const _segmentBorderRadius = 999.0;
-const _segmentPadding = EdgeInsets.all(2);
-
-/// Switch button look (`.demo3-segment-btn` / `.demo3-segment-btn--active`).
-const _segmentButtonPadding = EdgeInsets.symmetric(horizontal: 12, vertical: 5);
-const _segmentFontSize = 12.0;
-const _segmentTextColor = Color(0xFF5C626C);
-const _segmentActiveBackground = Color(0xFFFFFFFF);
-const _segmentActiveTextColor = Color(0xFF1D2026);
-const _segmentActiveShadow = BoxShadow(
-  color: Color(0x1F000000), // rgba(0, 0, 0, .12)
-  offset: Offset(0, 1),
-  blurRadius: 2,
+/// AppBar title style (`.demo4-title`).
+const _appBarTitleStyle = TextStyle(
+  color: Color(0xFF1D2026),
+  fontSize: 17,
+  fontWeight: FontWeight.w600,
 );
 
-/// No-key reason line shown under the switch. The mock never draws this
-/// state, so this reuses the thinking-line token (`.demo3-thinking-line`:
-/// font-size 12, color #9099A6) as the closest existing informational-text
-/// style (deviation — no direct mock reference).
-const _noKeyReasonPadding = EdgeInsets.fromLTRB(16, 0, 16, 8);
-const _noKeyReasonTextColor = Color(0xFF9099A6);
-const _noKeyReasonFontSize = 12.0;
+/// AppBar bottom divider, used instead of a shadow (flat style, `.demo4-appbar`'s
+/// `border-bottom: 1px solid #E3E5E9`).
+const _appBarBorderColor = Color(0xFFE3E5E9);
+const _appBarBorderWidth = 1.0;
 
-/// Style shared by the two pale lines [_ReplyFlow] adds in place of the
-/// mock — the not-sent-yet guidance line and the sent-question line. Reuses
-/// [_NoKeyReason]'s tone (deviation — no mock reference for either line).
-const _paleLineTextStyle = TextStyle(
-  color: _noKeyReasonTextColor,
-  fontSize: _noKeyReasonFontSize,
+/// AppBar icon buttons (`.demo4-iconbtn` / its `svg`).
+const _appBarIconColor = Color(0xFF3A3F47);
+const _appBarIconSize = 22.0;
+
+/// Padding of the reply's vertical scroll area (`.demo4-scroll`'s
+/// `padding: 10px 16px`). The bottom is computed instead of taking the
+/// mock's fixed value: it is the input pill's own height
+/// ([_inputBarPadding]'s top+bottom plus the taller of [_sendButtonSize] and
+/// one scaled line of [_inputTextStyle]) plus [_inputBarBottom], so the
+/// reply's tail is never hidden under the pill at any text scale. The
+/// device's safe-area inset is not part of it — the body sits inside a
+/// [SafeArea], so this whole area already ends above the inset.
+EdgeInsets _scrollPadding(BuildContext context) {
+  final lineHeight =
+      _inputTextStyle.fontSize! * MediaQuery.textScalerOf(context).scale(1);
+  final bottom =
+      _inputBarPadding.vertical +
+      max(_sendButtonSize, lineHeight) +
+      _inputBarBottom;
+  return EdgeInsets.fromLTRB(16, 10, 16, bottom);
+}
+
+/// Gap between the question bubble and the reply/thinking below it. No
+/// single mock token covers both cases: `.demo4-thinking`'s `margin-top` is
+/// 12px and `.demo4-reply`'s is 10px depending on which one follows the
+/// bubble — 12px is reused for both (deviation — no mock reference for the
+/// reply-only case).
+const _bubbleSpacingBottom = 12.0;
+
+/// Question bubble (`.demo4-bubble`, right-aligned by `.demo4-qrow`).
+const _bubbleColor = Color(0xFFDCE3EE);
+const _bubbleRadius = 18.0;
+const _bubbleMaxWidthFraction = 0.78; // `--demo4-bubble-max: 78%`
+const _bubblePadding = EdgeInsets.symmetric(horizontal: 14, vertical: 9);
+const _bubbleTextStyle = TextStyle(
+  color: Color(0xFF1D2026),
+  fontSize: 15,
+  height: 1.45,
 );
 
-/// Gap between the sent-question line and the reply below it (no mock
-/// reference — same kind of deviation as [_errorSpacingTop]).
-const _questionLineSpacingBottom = 6.0;
+/// Error line under the reply (`.demo4-error`).
+const _errorSpacingTop = 12.0;
+const _errorTextStyle = TextStyle(color: Color(0xFFB3261E), fontSize: 12);
 
-/// Bottom-fixed input bar (`.demo3-inputbar`).
-const _inputBarPadding = EdgeInsets.symmetric(horizontal: 14, vertical: 10);
+/// Bottom-fixed floating input pill (`.demo4-inputbar`).
+const _inputBarInset = 12.0;
+const _inputBarBottom = 16.0;
 const _inputBarBackground = Color(0xFFFFFFFF);
-const _inputBarBorderColor = Color(0xFFE3E5E9);
-const _inputBarBorderWidth = 1.0;
+const _inputBarRadius = 999.0;
+const _inputBarPadding = EdgeInsets.fromLTRB(16, 6, 6, 6);
 const _inputBarGap = 8.0;
+const _inputBarShadow = [
+  BoxShadow(color: Color(0x1A000000), offset: Offset(0, 4), blurRadius: 16),
+  BoxShadow(
+    color: Color(0x0A000000),
+    spreadRadius: 1,
+  ), // the CSS's `0 0 0 1` outline
+];
 
-/// Question field (`.demo3-input` / `.demo3-input--placeholder`). Background
-/// reuses [_pageBackground] (both are `#F1F2F4` in the mock).
-const _questionFieldPadding = EdgeInsets.symmetric(horizontal: 14, vertical: 9);
-const _questionFieldBorderRadius = 999.0;
-const _questionFieldFontSize = 13.5;
-const _questionFieldTextColor = Color(0xFF1D2026);
-const _questionFieldHintColor = Color(0xFF9099A6);
+/// Question field (`.demo4-input` / `.demo4-input--placeholder`).
+const _questionHint = 'Ask anything';
+const _inputTextStyle = TextStyle(color: Color(0xFF1D2026), fontSize: 13.5);
+const _inputHintStyle = TextStyle(color: Color(0xFF9099A6), fontSize: 13.5);
 
-/// Send button (`.demo3-send-btn` / `.demo3-send-btn--active`).
+/// Send button (`.demo4-send` / `.demo4-send--disabled`).
+const _sendLabel = 'Send';
 const _sendButtonSize = 34.0;
 const _sendButtonInactiveBackground = Color(0xFFDDE0E6);
 const _sendButtonActiveBackground = Color(0xFF3A3F47);
 const _sendButtonIconColor = Color(0xFFFFFFFF);
 const _sendButtonIconSize = 14.0;
 
-/// Error line under the reply. Not drawn in the mock (deviation — no direct
-/// reference); a plain red note, distinct from the gray informational tone
-/// used elsewhere, so it still reads as an error.
-const _errorSpacingTop = 8.0;
-const _errorTextColor = Color(0xFFB3261E);
-const _errorFontSize = 12.0;
-const _errorTextStyle = TextStyle(
-  color: _errorTextColor,
-  fontSize: _errorFontSize,
-);
+/// API key dialog text (`.demo4-dialog-title` / `.demo4-field-label` /
+/// `.demo4-helper` / `.demo4-btn-text` / `.demo4-btn-filled`). Chrome (radii,
+/// shadow, field border) is left to the plain `AlertDialog` this uses,
+/// rather than hand-matched to the mock — spec asks for `showDialog` +
+/// `AlertDialog`, not a custom-drawn overlay.
+const _apiKeyDialogTitle = 'Gemini API key';
 
-const _replayButtonBackground = Color(0xFFFFFFFF);
+/// Both the dialog's key field label and the AppBar key icon's
+/// `semanticLabel` — the icon and the field it opens read the same.
+const _apiKeyLabel = 'API key';
+const _apiKeyDialogNote = 'Kept in memory only. Cleared when the app closes.';
+const _apiKeyClearLabel = 'Clear';
+const _apiKeyUseLabel = 'Use key';
 
-/// Border and text color of `.demo3-retry-btn`.
-const _replayButtonBorderColor = Color(0xFFDDE0E6);
-const _replayButtonBorderWidth = 1.0;
-
-/// The button's corner radius (`border-radius: 999px` = a fully rounded
-/// pill shape).
-const _replayButtonBorderRadius = 999.0;
-
-const _replayButtonTextColor = Color(0xFF3A3F47);
-const _replayButtonFontSize = 12.5;
-
-const _replayButtonPadding = EdgeInsets.symmetric(horizontal: 18, vertical: 8);
-
-const _replayButtonTextStyle = TextStyle(
-  color: _replayButtonTextColor,
-  fontSize: _replayButtonFontSize,
-  fontWeight: FontWeight.w600,
-);
-
-/// The example app's screen: the fake / real (Gemini) switch at the top, the
-/// reply (with no bubble), and an input field plus send button pinned to the
-/// bottom edge of the screen.
+/// The example app's screen: an AppBar (title, replay, API key), a
+/// right-aligned question bubble, the reply (no bubble of its own), and a
+/// floating input pill pinned to the bottom edge.
 ///
 /// The fake supply ([FakeReplySource]) starts running automatically the
-/// moment the app launches. If [apiKey] is empty, the real (Gemini) supply
-/// cannot be selected and a one-line reason is shown under the switch. If a
-/// key is present it can be selected, and the question in the input field is
-/// sent once to [realReplyStream] (or, when it is omitted,
-/// [geminiReplyStream]) and the reply's Stream is run through
-/// [StreamingReplyController.attach]. Errors are received through [attach]'s
-/// `onError` and shown as one line under the reply. Every send advances the
-/// generation ([_generation]) and rebuilds [_ReplyFlow] by Key, so even while
-/// receiving, the old supply and Controller are disposed in that build phase
-/// (for both the real and the fake supply). Replay re-sends the previous
-/// question for the real supply, and re-runs the fake supply for the fake
-/// one. No history is kept: sending clears the input field and shows the
-/// question as one pale line above the reply, and while a real reply is
-/// still being received both buttons are disabled instead of re-sending.
+/// moment the app launches, showing [sampleQuestion] in the bubble. Sending
+/// replaces the bubble with the typed question; if the API key (entered
+/// through the key icon's dialog, or passed in as [apiKey]) is empty, the
+/// send just replays the fake supply — otherwise the question goes once to
+/// [realReplyStream] (or, when it is omitted, [geminiReplyStream]) and the
+/// reply's Stream is run through [StreamingReplyController.attach]. Errors
+/// are received through [attach]'s `onError` and shown as one line under the
+/// reply. Every send or replay advances the generation ([_generation]) and
+/// rebuilds [_ReplyFlow] by Key, so even while receiving, the old supply and
+/// Controller are disposed in that build phase. The bubble always shows the
+/// question replay would resend next ([_ReplyPageState._lastQuestion], or
+/// [sampleQuestion] until the first send), real supply or fake. Replay
+/// resends that question to the real supply if a key is currently set;
+/// otherwise it replays the fake supply from the start. While a real reply
+/// is being received, both the send and replay controls are disabled
+/// instead of starting another one.
 ///
 /// So that a vertically long reply can still be read, only the reply area
 /// scrolls vertically. The package itself does not auto-follow the tail;
@@ -158,16 +160,17 @@ class ReplyPage extends StatefulWidget {
   /// fixed.
   final Random? random;
 
-  /// Gemini API key. Empty disables the real supply (spec: build-time only,
-  /// via `--dart-define`; never stored on device, never shown on screen).
+  /// The Gemini API key's initial value (spec: from `--dart-define`, never
+  /// stored on device, never shown on screen). Editable afterward through
+  /// the AppBar's key icon; empty disables the real supply.
   final String apiKey;
 
   /// Gemini model name, used when [realReplyStream] is not overridden.
   final String model;
 
   /// Real supply factory (question → Stream of [Chunk]). Defaults to
-  /// [geminiReplyStream] with [apiKey] / [model]; tests substitute a fake
-  /// [Stream] here instead of calling the real Gemini API.
+  /// [geminiReplyStream] with the current key / [model]; tests substitute a
+  /// fake [Stream] here instead of calling the real Gemini API.
   final Stream<Chunk> Function(String question)? realReplyStream;
 
   @override
@@ -190,86 +193,72 @@ class _ReplyPageState extends State<ReplyPage> {
   int _generation = 0;
 
   /// The vertical scroll position of the whole page. Jumped back to the top
-  /// each time a new reply starts flowing ([_start]).
+  /// each time a new reply starts flowing ([_startFlow]).
   final ScrollController _scrollController = ScrollController();
 
   /// The text in the input field at the bottom edge.
   final TextEditingController _questionController = TextEditingController();
 
-  /// The selected supply: true = real (Gemini), false = fake. It always
-  /// starts on the fake supply, even when [apiKey] is empty.
-  bool _useRealSupply = false;
+  /// The current API key (starts as [ReplyPage.apiKey]; editable through the
+  /// dialog opened from the AppBar's key icon). Kept only in memory.
+  late String _apiKey = widget.apiKey;
 
-  /// The question last sent to the real supply (used when replay re-sends
-  /// it).
+  /// The question from the most recent send, real supply or fake — shown in
+  /// the bubble, and what replay re-sends. `null` until a send has happened
+  /// at least once; the bubble shows [sampleQuestion] while it is `null`.
   String? _lastQuestion;
 
-  /// The real supply for the current generation (null while the fake supply
-  /// is selected, or if nothing has been sent yet).
+  /// The real supply for the current generation — non-null exactly when this
+  /// generation is using the real supply instead of the fake one.
   Stream<Chunk>? _realStream;
 
-  /// True while a real-supply request is in flight. Set by [_start] the
+  /// True while a real-supply request is in flight. Set by [_startFlow] the
   /// moment a real Stream is created; cleared once [_ReplyFlow] reports,
   /// through [_setReceiving], that its Controller has completed (or
   /// errored — [StreamingReplyController.attach] completes on error too).
   /// The fake supply never sets this.
   bool _receiving = false;
 
-  bool get _hasApiKey => widget.apiKey.isNotEmpty;
+  bool get _hasApiKey => _apiKey.isNotEmpty;
 
   Stream<Chunk> _startRealStream(String question) =>
       widget.realReplyStream?.call(question) ??
-      geminiReplyStream(question, apiKey: widget.apiKey, model: widget.model);
+      geminiReplyStream(question, apiKey: _apiKey, model: widget.model);
 
-  /// A tap on the switch. Without a key, it does not switch to the real
-  /// supply. Advances the generation so [_ReplyFlow] is rebuilt by Key — the
-  /// switch would otherwise not reach a flow that is already running (merely
-  /// changing [_useRealSupply] rebuilds [_ReplyFlow] with a different
-  /// `realStream` argument, but its already-created State ignores that;
-  /// nothing actually observes it after `initState`). Clears [_realStream]:
-  /// a plain switch never has a fresh answer to show, and a Stream from an
-  /// earlier generation may already be attached (Streams like the one
-  /// [geminiReplyStream] returns can only be listened to once) — [_ReplyFlow]
-  /// treats real-selected-but-no-stream as "nothing sent yet" rather than
-  /// starting the fake supply under the real supply's name.
-  void _selectSupply(bool useReal) {
-    if (useReal && !_hasApiKey) return;
-    if (useReal == _useRealSupply) return;
+  /// Starts a new generation. [sentQuestion] is the text from the input
+  /// field for an explicit send, or `null` for a replay (which resends
+  /// [_lastQuestion] instead, and — unlike a send — never clears the input
+  /// field). The question goes to the real supply when a key is set and
+  /// there is a question to send at all; otherwise the fake supply runs.
+  void _startFlow(String? sentQuestion) {
+    final question = sentQuestion ?? _lastQuestion;
     setState(() {
-      _useRealSupply = useReal;
-      _realStream = null;
-      _receiving = false;
+      if (sentQuestion != null) _lastQuestion = sentQuestion;
+      _realStream = (_hasApiKey && question != null)
+          ? _startRealStream(question)
+          : null;
+      _receiving = _realStream != null;
       _generation++;
     });
-  }
-
-  /// Send ([question] is the text from the input field) or replay
-  /// ([question] is null, meaning "resend"). For the fake supply, [question]
-  /// is not looked at at all — either way it just re-runs the fake supply.
-  /// For the real supply, it resends `question ?? _lastQuestion`; if that is
-  /// null or blank, it does nothing — there is nothing real to (re)send yet,
-  /// and a blank question is never sent. Either way, on an actual (re)send it
-  /// advances the generation, rebuilds [_ReplyFlow], and jumps the reading
-  /// position back to the top (the package itself never scrolls).
-  void _start(String? question) {
-    if (!_useRealSupply) {
-      setState(() => _generation++);
-      _jumpToTop();
-      return;
-    }
-    final effective = question ?? _lastQuestion;
-    if (effective == null || effective.trim().isEmpty) return;
-    setState(() {
-      _lastQuestion = effective;
-      _realStream = _startRealStream(effective);
-      _receiving = true;
-      _generation++;
-    });
-    // Only an explicit send (not a replay, where `question` is null) empties
-    // the field — replay keeps whatever the user may have typed since.
-    if (question != null) _questionController.clear();
+    if (sentQuestion != null) _questionController.clear();
     _jumpToTop();
   }
+
+  /// The send button / Enter key: sends the input field's text. Empty text
+  /// (after trimming) does nothing, and so does a send while a real reply is
+  /// still being received (the button is disabled, but the keyboard's send
+  /// key reaches this either way).
+  void _send() {
+    if (_receiving) return;
+    final question = _questionController.text.trim();
+    if (question.isEmpty) return;
+    _startFlow(question);
+  }
+
+  /// The AppBar's replay icon: resends [_lastQuestion] to the real supply if
+  /// a key is set and a question has been sent at least once before,
+  /// otherwise replays the fake supply from the start.
+  void _replay() => _startFlow(null);
 
   /// Jumps [Keys.replyScroll] back to the top, if it is attached.
   void _jumpToTop() {
@@ -284,6 +273,20 @@ class _ReplyPageState extends State<ReplyPage> {
     setState(() => _receiving = value);
   }
 
+  /// Opens the API key dialog. A non-null result (from "Clear" or "Use key")
+  /// replaces [_apiKey]; dismissing the dialog any other way leaves it
+  /// unchanged. The dialog pops its field's raw text, so the single trim
+  /// happens here, where the key enters state — a blank-only entry therefore
+  /// reads as no key at all.
+  Future<void> _openApiKeyDialog() async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => _ApiKeyDialog(initialKey: _apiKey),
+    );
+    if (!mounted || result == null) return;
+    setState(() => _apiKey = result.trim());
+  }
+
   @override
   void dispose() {
     _scrollController.dispose();
@@ -295,59 +298,72 @@ class _ReplyPageState extends State<ReplyPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _pageBackground,
-      // Wrapped in a SafeArea so that the switch and the reply do not slip
-      // under the status bar or the notch (this Scaffold has no AppBar, so
-      // the top inset is not left free automatically). The background color
-      // is painted by the Scaffold itself, so it reaches beyond the
-      // SafeArea.
+      appBar: AppBar(
+        backgroundColor: _pageBackground,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        title: const Text(appTitle, style: _appBarTitleStyle),
+        bottom: const PreferredSize(
+          preferredSize: Size.fromHeight(_appBarBorderWidth),
+          child: SizedBox(
+            height: _appBarBorderWidth,
+            width: double.infinity,
+            child: ColoredBox(color: _appBarBorderColor),
+          ),
+        ),
+        actions: [
+          IconButton(
+            key: Keys.replayButton,
+            iconSize: _appBarIconSize,
+            color: _appBarIconColor,
+            onPressed: _receiving ? null : _replay,
+            icon: const Icon(Icons.refresh, semanticLabel: 'Replay'),
+          ),
+          IconButton(
+            key: Keys.apiKeyButton,
+            iconSize: _appBarIconSize,
+            color: _appBarIconColor,
+            onPressed: _openApiKeyDialog,
+            icon: const Icon(Icons.vpn_key, semanticLabel: _apiKeyLabel),
+          ),
+        ],
+      ),
       body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        top: false,
+        child: Stack(
+          fit: StackFit.expand,
           children: [
-            _SupplySwitch(
-              useReal: _useRealSupply,
-              hasApiKey: _hasApiKey,
-              onSelectFake: () => _selectSupply(false),
-              onSelectReal: () => _selectSupply(true),
-            ),
-            if (!_hasApiKey) const _NoKeyReason(),
-            Expanded(
-              child: SingleChildScrollView(
-                key: Keys.replyScroll,
-                controller: _scrollController,
-                padding: _pagePadding,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _ReplyFlow(
-                      key: ValueKey(_generation),
-                      thinking: widget.thinking,
-                      reply: widget.reply,
-                      random: widget.random,
-                      useReal: _useRealSupply,
-                      realStream: _useRealSupply ? _realStream : null,
-                      question: _lastQuestion,
-                      onReceivingChanged: _setReceiving,
-                    ),
-                    const SizedBox(height: _actionsSpacingTop),
-                    Center(
-                      child: _ReplayButton(
-                        onTap: () => _start(null),
-                        receiving: _receiving,
-                      ),
-                    ),
-                  ],
-                ),
+            SingleChildScrollView(
+              key: Keys.replyScroll,
+              controller: _scrollController,
+              padding: _scrollPadding(context),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _QuestionBubble(text: _lastQuestion ?? sampleQuestion),
+                  const SizedBox(height: _bubbleSpacingBottom),
+                  _ReplyFlow(
+                    key: ValueKey(_generation),
+                    thinking: widget.thinking,
+                    reply: widget.reply,
+                    random: widget.random,
+                    realStream: _realStream,
+                    apiKey: _apiKey,
+                    onReceivingChanged: _setReceiving,
+                  ),
+                ],
               ),
             ),
-            // Kept inside the body rather than in `bottomNavigationBar`: the
-            // Scaffold shrinks its body above the keyboard but leaves the
-            // bottom bar underneath it, which hid the question while typing.
-            _QuestionInputBar(
-              controller: _questionController,
-              onSend: () => _start(_questionController.text),
-              receiving: _receiving,
+            Positioned(
+              left: _inputBarInset,
+              right: _inputBarInset,
+              bottom: _inputBarBottom,
+              child: _QuestionInputBar(
+                controller: _questionController,
+                onSend: _send,
+                receiving: _receiving,
+              ),
             ),
           ],
         ),
@@ -356,56 +372,77 @@ class _ReplyPageState extends State<ReplyPage> {
   }
 }
 
-/// Supply Chunk to a [StreamingReplyController]: either the fake supply
-/// ([FakeReplySource], when [useReal] is false) or a real supply
-/// ([realStream]) attached via [StreamingReplyController.attach] (when
-/// [useReal] is true and [realStream] is non-null — real-selected-but-null
-/// starts no supply at all). Owns exactly one [StreamingReplyController]
-/// (and, in the fake case, one [FakeReplySource]); both are disposed together
-/// when this widget is disposed (which also cancels the real supply's
-/// subscription, per [StreamingReplyController.dispose]).
+/// Right-aligned question bubble (`.demo4-qrow` / `.demo4-bubble`): shows
+/// [sampleQuestion] at launch and stays that way until the first send.
+class _QuestionBubble extends StatelessWidget {
+  const _QuestionBubble({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: constraints.maxWidth * _bubbleMaxWidthFraction,
+            ),
+            child: Container(
+              padding: _bubblePadding,
+              decoration: const BoxDecoration(
+                color: _bubbleColor,
+                borderRadius: BorderRadius.all(Radius.circular(_bubbleRadius)),
+              ),
+              child: Text(text, style: _bubbleTextStyle),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Supplies Chunk to a [StreamingReplyController]: the fake supply
+/// ([FakeReplySource], when [realStream] is null) or the real supply
+/// ([realStream], attached via [StreamingReplyController.attach], when it is
+/// non-null). Owns exactly one [StreamingReplyController] (and, in the fake
+/// case, one [FakeReplySource]); both are disposed together when this widget
+/// is disposed (which also cancels the real supply's subscription, per
+/// [StreamingReplyController.dispose]).
 class _ReplyFlow extends StatefulWidget {
   const _ReplyFlow({
     super.key,
     required this.thinking,
     required this.reply,
     this.random,
-    required this.useReal,
     this.realStream,
-    this.question,
+    required this.apiKey,
     this.onReceivingChanged,
   });
 
-  /// The thinking text to supply (used only when [useReal] is false).
+  /// The thinking text to supply (used only when [realStream] is null).
   final String thinking;
 
-  /// The reply to supply (used only when [useReal] is false).
+  /// The reply to supply (used only when [realStream] is null).
   final String reply;
 
   /// The supply's [Random] ([ReplyPage.random] passed straight through; fake
   /// supply only).
   final Random? random;
 
-  /// Whether this generation is the real supply (true) or the fake supply
-  /// (false).
-  final bool useReal;
-
-  /// The real supply for this generation (only meaningful when [useReal] is
-  /// true). Null when nothing has been sent yet for the real supply — in
-  /// that case no supply is started at all (not even the fake one): the flow
-  /// stays in its pristine, pre-receiving state until a real question is
-  /// sent.
+  /// The real supply for this generation, or null to run the fake supply
+  /// instead.
   final Stream<Chunk>? realStream;
 
-  /// The question last sent to the real supply ([ReplyPageState._lastQuestion]
-  /// passed straight through). Shown as a pale line above the reply once
-  /// [realStream] is non-null; ignored otherwise (fake supply, or
-  /// real-selected-but-nothing-sent-yet).
-  final String? question;
+  /// The screen's current API key ([_ReplyPageState._apiKey]), used only to
+  /// redact it from an error's text before showing that error.
+  final String apiKey;
 
   /// Called with `false` once this generation's Controller reports it is
   /// done receiving (Stream closed or errored). Only ever fires when
-  /// [useReal] is true and [realStream] is non-null.
+  /// [realStream] is non-null.
   final ValueChanged<bool>? onReceivingChanged;
 
   @override
@@ -420,21 +457,24 @@ class _ReplyFlowState extends State<_ReplyFlow> {
   /// `onError` (only possible with the real supply).
   Object? _error;
 
+  /// The key this generation's request was sent with — [_ReplyFlow.apiKey]
+  /// as it was when the flow was created (snapshotted in [initState], so
+  /// that editing the key in the dialog while an old error is still on
+  /// screen cannot un-redact it).
+  late final String _requestKey;
+
   @override
   void initState() {
     super.initState();
+    _requestKey = widget.apiKey;
     _controller = StreamingReplyController();
-    if (widget.useReal) {
-      final realStream = widget.realStream;
-      // Nothing sent yet for the real supply: stay pristine rather than
-      // start the fake supply under the real supply's name.
-      if (realStream != null) {
-        _controller.addListener(_handleControllerChange);
-        _controller.attach(
-          realStream,
-          onError: (error, stackTrace) => setState(() => _error = error),
-        );
-      }
+    final realStream = widget.realStream;
+    if (realStream != null) {
+      _controller.addListener(_handleControllerChange);
+      _controller.attach(
+        realStream,
+        onError: (error, stackTrace) => setState(() => _error = error),
+      );
     } else {
       _source = FakeReplySource(
         controller: _controller,
@@ -447,11 +487,16 @@ class _ReplyFlowState extends State<_ReplyFlow> {
 
   /// Reports completion (Stream closed or errored — both set
   /// [StreamingReplyController.isComplete]) back to [ReplyPage] through
-  /// [_ReplyFlow.onReceivingChanged]. Fires on every notification while
-  /// attached, not just the one where it flips; the parent's
-  /// [ReplyPageState._setReceiving] already no-ops on a repeat value.
+  /// [_ReplyFlow.onReceivingChanged]. Unsubscribes itself first: a still
+  /// fast-forwarding previous generation's Controller keeps ticking (and
+  /// notifying) past this generation's build, and without unsubscribing it
+  /// would keep reporting "done" on every tick, clearing
+  /// [ReplyPageState._receiving] out from under a request the current
+  /// generation just started.
   void _handleControllerChange() {
-    if (_controller.isComplete) widget.onReceivingChanged?.call(false);
+    if (!_controller.isComplete) return;
+    _controller.removeListener(_handleControllerChange);
+    widget.onReceivingChanged?.call(false);
   }
 
   @override
@@ -464,150 +509,39 @@ class _ReplyFlowState extends State<_ReplyFlow> {
 
   @override
   Widget build(BuildContext context) {
-    // Real supply selected but nothing sent yet: show the guidance line in
-    // place of StreamingReply instead of an idling (empty) one.
-    if (widget.useReal && widget.realStream == null) {
-      return const Text(_guidanceLineText, style: _paleLineTextStyle);
-    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (widget.useReal && widget.question != null) ...[
-          Text(widget.question!, style: _paleLineTextStyle),
-          const SizedBox(height: _questionLineSpacingBottom),
-        ],
         StreamingReply(
           controller: _controller,
-          thinkingTitle: '考え中…',
-          thoughtForSeconds: (seconds) => '$seconds 秒考えました',
+          thinkingTitle: 'Thinking…',
+          thoughtForSeconds: (seconds) => 'Thought for ${seconds}s',
         ),
         if (_error != null) ...[
           const SizedBox(height: _errorSpacingTop),
-          Text('エラー: $_error', style: _errorTextStyle),
+          Text(_errorLine(), style: _errorTextStyle),
         ],
       ],
     );
   }
-}
 
-/// Guidance line shown by [_ReplyFlowState] in place of the reply while the
-/// real supply is selected but nothing has been sent yet.
-const _guidanceLineText = '質問を入力して送ってください';
-
-/// Top switch between fake and real supply (`.demo3-topbar` / `.demo3-segment`
-/// / `.demo3-segment-btn`).
-class _SupplySwitch extends StatelessWidget {
-  const _SupplySwitch({
-    required this.useReal,
-    required this.hasApiKey,
-    required this.onSelectFake,
-    required this.onSelectReal,
-  });
-
-  final bool useReal;
-  final bool hasApiKey;
-  final VoidCallback onSelectFake;
-  final VoidCallback onSelectReal;
-
-  static const _fakeLabel = '作り物';
-  static const _realLabel = '本物 (Gemini)';
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: _topbarPadding,
-      child: Container(
-        padding: _segmentPadding,
-        decoration: BoxDecoration(
-          color: _segmentBackground,
-          borderRadius: BorderRadius.circular(_segmentBorderRadius),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _SegmentButton(
-              label: _fakeLabel,
-              active: !useReal,
-              onTap: onSelectFake,
-            ),
-            _SegmentButton(
-              label: _realLabel,
-              active: useReal,
-              disabled: !hasApiKey,
-              onTap: onSelectReal,
-            ),
-          ],
-        ),
-      ),
-    );
+  /// `'Error: '` plus [_error]'s text, with [_requestKey] (if set)
+  /// replaced by `***` everywhere it appears — `dart:io`'s header
+  /// validation includes the offending header value verbatim in its
+  /// `FormatException` message, and the Gemini request sends the key as a
+  /// header.
+  String _errorLine() {
+    var message = '$_error';
+    if (_requestKey.isNotEmpty) {
+      message = message.replaceAll(_requestKey, '***');
+    }
+    return 'Error: $message';
   }
 }
 
-class _SegmentButton extends StatelessWidget {
-  const _SegmentButton({
-    required this.label,
-    required this.active,
-    required this.onTap,
-    this.disabled = false,
-  });
-
-  final String label;
-  final bool active;
-  final bool disabled;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: disabled ? null : onTap,
-      child: Container(
-        padding: _segmentButtonPadding,
-        decoration: active
-            ? BoxDecoration(
-                color: _segmentActiveBackground,
-                borderRadius: BorderRadius.circular(_segmentBorderRadius),
-                boxShadow: const [_segmentActiveShadow],
-              )
-            : null,
-        child: Text(
-          label,
-          style: TextStyle(
-            color: (active ? _segmentActiveTextColor : _segmentTextColor)
-                .withValues(alpha: disabled ? 0.5 : 1),
-            fontSize: _segmentFontSize,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Reason line shown under the switch when [ReplyPage.apiKey] is empty.
-class _NoKeyReason extends StatelessWidget {
-  const _NoKeyReason();
-
-  static const _text = 'API キーが無いため本物は選べません';
-
-  @override
-  Widget build(BuildContext context) {
-    return const Padding(
-      padding: _noKeyReasonPadding,
-      child: Text(
-        _text,
-        style: TextStyle(
-          color: _noKeyReasonTextColor,
-          fontSize: _noKeyReasonFontSize,
-        ),
-      ),
-    );
-  }
-}
-
-/// Bottom-fixed question input + send button (`.demo3-inputbar` /
-/// `.demo3-input` / `.demo3-send-btn`).
+/// Bottom-fixed floating input pill (`.demo4-inputbar` / `.demo4-input` /
+/// `.demo4-send`).
 class _QuestionInputBar extends StatelessWidget {
   const _QuestionInputBar({
     required this.controller,
@@ -619,50 +553,36 @@ class _QuestionInputBar extends StatelessWidget {
   final VoidCallback onSend;
 
   /// True while a real-supply request is in flight — disables the send
-  /// button. The field itself stays editable; only sending is blocked.
+  /// button. The field itself stays editable.
   final bool receiving;
-
-  static const _hint = '質問を入力';
-  static const _sendLabel = '送る';
 
   @override
   Widget build(BuildContext context) {
+    final onTap = receiving ? null : onSend;
     return Container(
       padding: _inputBarPadding,
       decoration: const BoxDecoration(
         color: _inputBarBackground,
-        border: Border(
-          top: BorderSide(
-            color: _inputBarBorderColor,
-            width: _inputBarBorderWidth,
-          ),
-        ),
+        borderRadius: BorderRadius.all(Radius.circular(_inputBarRadius)),
+        boxShadow: _inputBarShadow,
       ),
       child: Row(
         children: [
           Expanded(
             child: TextField(
+              key: Keys.questionField,
               controller: controller,
-              style: const TextStyle(
-                color: _questionFieldTextColor,
-                fontSize: _questionFieldFontSize,
-              ),
-              decoration: InputDecoration(
-                hintText: _hint,
-                hintStyle: const TextStyle(
-                  color: _questionFieldHintColor,
-                  fontSize: _questionFieldFontSize,
-                ),
-                filled: true,
-                fillColor: _pageBackground,
+              style: _inputTextStyle,
+              textInputAction: TextInputAction.send,
+              // `onSend` itself already no-ops while `receiving`
+              // (`ReplyPageState._send`), so this needs no separate guard.
+              onSubmitted: (_) => onSend(),
+              decoration: const InputDecoration(
+                hintText: _questionHint,
+                hintStyle: _inputHintStyle,
                 isDense: true,
-                contentPadding: _questionFieldPadding,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(
-                    _questionFieldBorderRadius,
-                  ),
-                  borderSide: BorderSide.none,
-                ),
+                contentPadding: EdgeInsets.symmetric(vertical: 8),
+                border: InputBorder.none,
               ),
             ),
           ),
@@ -672,16 +592,20 @@ class _QuestionInputBar extends StatelessWidget {
             builder: (context, value, _) {
               final active = value.text.trim().isNotEmpty && !receiving;
               return Semantics(
+                key: Keys.sendButton,
                 label: _sendLabel,
                 button: true,
                 enabled: !receiving,
-                // The "→" glyph below has its own auto-generated semantics
-                // label; without this, it merges into ours as "送る\n→"
-                // instead of the exact "送る" `find.bySemanticsLabel` needs.
+                // Gives the node its own `SemanticsAction.tap` (same as
+                // the replay `IconButton`'s built-in one) — `excludeSemantics`
+                // below hides the child `GestureDetector`'s tap from the
+                // tree, so without this a screen reader's activate gesture
+                // would have nothing to call.
+                onTap: onTap,
                 excludeSemantics: true,
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTap: receiving ? null : onSend,
+                  onTap: onTap,
                   child: Container(
                     width: _sendButtonSize,
                     height: _sendButtonSize,
@@ -692,12 +616,10 @@ class _QuestionInputBar extends StatelessWidget {
                           : _sendButtonInactiveBackground,
                       shape: BoxShape.circle,
                     ),
-                    child: const Text(
-                      '→',
-                      style: TextStyle(
-                        color: _sendButtonIconColor,
-                        fontSize: _sendButtonIconSize,
-                      ),
+                    child: const Icon(
+                      Icons.arrow_upward,
+                      color: _sendButtonIconColor,
+                      size: _sendButtonIconSize,
                     ),
                   ),
                 ),
@@ -710,52 +632,62 @@ class _QuestionInputBar extends StatelessWidget {
   }
 }
 
-/// The replay button.
-class _ReplayButton extends StatelessWidget {
-  const _ReplayButton({required this.onTap, this.receiving = false});
+/// The API key dialog (`showDialog` + `AlertDialog`), opened from the
+/// AppBar's key icon. The key lives only in this dialog's own
+/// [TextEditingController] for as long as it's open — never written to
+/// disk. Returns the field's raw text on "Use key" (trimmed by
+/// [_ReplyPageState._openApiKeyDialog]), `''` on "Clear", or `null` if
+/// dismissed any other way (leaving [ReplyPage]'s key unchanged).
+class _ApiKeyDialog extends StatefulWidget {
+  const _ApiKeyDialog({required this.initialKey});
 
-  final VoidCallback onTap;
+  /// The key to pre-fill the field with (the current [ReplyPage._apiKey]).
+  final String initialKey;
 
-  /// True while a real-supply request is in flight — disables this button
-  /// (mirrors [_QuestionInputBar.receiving]).
-  final bool receiving;
+  @override
+  State<_ApiKeyDialog> createState() => _ApiKeyDialogState();
+}
 
-  /// The button's label.
-  static const _label = '最初から流す';
+class _ApiKeyDialogState extends State<_ApiKeyDialog> {
+  late final _controller = TextEditingController(text: widget.initialKey);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    // Wrapped like the send button (Semantics carrying label/button/enabled,
-    // excludeSemantics true) so `getSemantics` reads enabled state off this
-    // node — the Key now lives on the Semantics widget rather than the
-    // GestureDetector, since that is the node `find.byKey` must resolve to.
-    return Semantics(
-      key: Keys.replayButton,
-      label: _label,
-      button: true,
-      enabled: !receiving,
-      excludeSemantics: true,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: receiving ? null : onTap,
-        child: Opacity(
-          // No mock reference for the disabled look; dims like other
-          // disabled controls in this file (e.g. _SegmentButton).
-          opacity: receiving ? 0.5 : 1,
-          child: Container(
-            padding: _replayButtonPadding,
-            decoration: BoxDecoration(
-              color: _replayButtonBackground,
-              border: Border.all(
-                color: _replayButtonBorderColor,
-                width: _replayButtonBorderWidth,
-              ),
-              borderRadius: BorderRadius.circular(_replayButtonBorderRadius),
-            ),
-            child: const Text(_label, style: _replayButtonTextStyle),
+    return AlertDialog(
+      title: const Text(_apiKeyDialogTitle),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // `obscureText` only hides the glyphs on screen — this field's
+          // `TextEditingController` still holds the key as plain text, so
+          // `debugDumpApp` / DevTools' widget inspector can still show it.
+          // Accepted for the example's scope.
+          TextField(
+            controller: _controller,
+            obscureText: true,
+            decoration: const InputDecoration(labelText: _apiKeyLabel),
           ),
-        ),
+          const SizedBox(height: 8),
+          const Text(_apiKeyDialogNote),
+        ],
       ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(''),
+          child: const Text(_apiKeyClearLabel),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text),
+          child: const Text(_apiKeyUseLabel),
+        ),
+      ],
     );
   }
 }

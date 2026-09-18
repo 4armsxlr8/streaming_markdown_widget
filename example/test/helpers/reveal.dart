@@ -27,6 +27,39 @@ Future<void> pumpFrames(WidgetTester tester, Duration total) async {
   }
 }
 
+/// [condition] が満たされるまで [frameInterval] 刻みで進める。
+///
+/// [budget] を使い切っても満たされなければ [reason] を添えて失敗する。時間は
+/// 供給の Timer と返答の Widget が回す Ticker 越しにしか進まないので、待つ側は
+/// `pumpAndSettle` ではなくこれを使う (待機の点と見出し行の光が回り続けるので
+/// `pumpAndSettle` は終わらない)。
+Future<void> pumpUntil(
+  WidgetTester tester,
+  bool Function() condition, {
+  required Duration budget,
+  required String reason,
+}) async {
+  for (
+    var elapsed = Duration.zero;
+    elapsed < budget;
+    elapsed += frameInterval
+  ) {
+    await tester.pump(frameInterval);
+    if (condition()) return;
+  }
+  fail('${budget.inMilliseconds}ms 進めても条件が満たされなかった: $reason');
+}
+
+/// 返答の文字 (返答の区分の [RevealedMarkdown])。
+final Finder replyText = find.byWidgetPredicate(
+  (widget) => widget is RevealedMarkdown && widget.kind == ChunkKind.reply,
+);
+
+/// 思考の文 (思考の区分の [RevealedMarkdown])。
+final Finder thinkingText = find.byWidgetPredicate(
+  (widget) => widget is RevealedMarkdown && widget.kind == ChunkKind.thinking,
+);
+
 /// 描かれた [TextSpan] 1 つ。style は親から受け継いだぶんを合成済み。
 class RevealedSpan {
   const RevealedSpan({

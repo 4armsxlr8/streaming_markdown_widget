@@ -39,8 +39,9 @@ import 'package:flutter/widgets.dart';
 /// read from `controller.style` — they only take effect when passed to
 /// [StreamingReplyController]; the same-named fields on a
 /// [StreamingReply]/[RevealedMarkdown]/[ThinkingFrame] `style` are a separate
-/// instance and are never read. The Widget's 3 values
-/// ([thinkingShimmerDuration], [waitingDotDuration], [waitingDotStagger]) are
+/// instance and are never read. The Widget's 4 values
+/// ([thinkingShimmerDuration], [waitingDotDuration], [waitingDotStagger],
+/// [thinkingCollapseCurve]) are
 /// read from the nearest [StreamingReplyStyleScope] instead. Pass the same
 /// values to both places (or share one instance) to keep them in sync.
 class StreamingReplyStyle {
@@ -66,6 +67,7 @@ class StreamingReplyStyle {
     this.thinkingShimmerDuration = const Duration(milliseconds: 1600),
     this.waitingDotDuration = const Duration(milliseconds: 1400),
     this.waitingDotStagger = const Duration(milliseconds: 200),
+    this.thinkingCollapseCurve = Curves.fastOutSlowIn,
     // TextStyle (per-role typography; see class doc for the merge rules).
     this.bodyTextStyle = _defaultBodyTextStyle,
     this.h2TextStyle = _defaultH2TextStyle,
@@ -221,6 +223,11 @@ class StreamingReplyStyle {
 
   /// Delay between the 1st, 2nd, and 3rd waiting dot's cycle.
   final Duration waitingDotStagger;
+
+  /// Curve for the thinking frame's body collapse/expand
+  /// ([thinkingCollapseDuration] sets its duration; see the time-fields
+  /// split above).
+  final Curve thinkingCollapseCurve;
 
   // ── TextStyle (per-role typography; see class doc for the merge rules) ──
 

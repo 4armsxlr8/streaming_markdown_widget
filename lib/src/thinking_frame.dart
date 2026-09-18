@@ -13,9 +13,11 @@ import 'thinking_shimmer.dart';
 /// "Thinking…" ([ThinkingShimmer]); once it ends, "Thought for n seconds". The
 /// body draws the thinking text with [RevealedMarkdown] (`kind: thinking`,
 /// notation not formatted) and changes its height with [AnimatedSize]
-/// (`controller.style.thinkingCollapseDuration`, not the widget-side
-/// [style]'s — see the time-fields split in the [StreamingReplyStyle] class
-/// doc) according to the state
+/// (`controller.style.thinkingCollapseDuration` for the duration, not the
+/// widget-side [style]'s — see the time-fields split in the
+/// [StreamingReplyStyle] class doc — and the widget-side
+/// [StreamingReplyStyle.thinkingCollapseCurve] for the curve) according to
+/// the state
 /// [StreamingReplyController.thinkingFrame] reports (one line / full /
 /// collapsed). In the one-line state it shows the latest
 /// line (the last one) and cuts off everything before it at the top. A tap
@@ -161,10 +163,12 @@ class ThinkingFrame extends StatelessWidget {
               ),
               AnimatedSize(
                 key: Keys.thinkingFrameBody,
-                // The controller's own style, not effectiveStyle — see the
-                // class doc and StreamingReplyController.style.
+                // duration: the controller's own style, not effectiveStyle —
+                // see the class doc and StreamingReplyController.style.
                 duration: controller.style.thinkingCollapseDuration,
-                curve: Curves.fastOutSlowIn,
+                // curve: the widget-side style (effectiveStyle), same source
+                // as the shimmer/waiting-dot timing.
+                curve: effectiveStyle.thinkingCollapseCurve,
                 alignment: Alignment.topLeft,
                 child: ConstrainedBox(
                   // A finite maxHeight cuts the body off at that height (the

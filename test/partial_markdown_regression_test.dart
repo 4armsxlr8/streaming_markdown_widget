@@ -129,25 +129,39 @@ void main() {
 
   // ── AC-26 (全 prefix の機械検査) ──
 
-  test('AC-26 同梱の返答を 1 文字ずつ全 prefix で届けても、生の記号が残らない', () {
-    final prefixes = graphemePrefixes(sampleReply);
+  // 機械検査にかける同梱の返答は 2 つ — 今の example のサンプル (英語) と、
+  // かつての example のサンプル (日本語)。後者は example と同期しない固定の
+  // フィクスチャで、3 列の表・複数段落を含むのはこちらだけなので両方を回す。
+  const scannedReplies = <String, String>{
+    '英語のサンプル': sampleReplyEnglish,
+    'かつての日本語のサンプル': sampleReply,
+  };
 
-    expect(
-      rawSymbolViolations(prefixes),
-      isEmpty,
-      reason:
-          '全 ${prefixes.length} prefix の可視文字列 '
-          '(コードブロック・コードスパンの中身は除く) に $rawSymbols は残らない',
-    );
-  });
+  for (final scanned in scannedReplies.entries) {
+    test('AC-26 同梱の返答 (${scanned.key}) を 1 文字ずつ全 prefix で届けても、生の記号が残らない', () {
+      final prefixes = graphemePrefixes(scanned.value);
 
-  test('AC-26 同梱の返答を 1 文字ずつ全 prefix で届けても、可視文字列は次の prefix の先頭部分になっている', () {
-    expect(
-      visibleGrowthViolations(graphemePrefixes(sampleReply)),
-      isEmpty,
-      reason: '表示済みの文字が消えたり並びが入れ替わったりしない',
+      expect(
+        rawSymbolViolations(prefixes),
+        isEmpty,
+        reason:
+            '全 ${prefixes.length} prefix の可視文字列 '
+            '(コードブロック・コードスパンの中身は除く) に $rawSymbols は残らない',
+      );
+    });
+
+    test(
+      'AC-26 同梱の返答 (${scanned.key}) を 1 文字ずつ全 prefix で届けても、可視文字列は次の prefix の先頭部分に'
+      'なっている',
+      () {
+        expect(
+          visibleGrowthViolations(graphemePrefixes(scanned.value)),
+          isEmpty,
+          reason: '表示済みの文字が消えたり並びが入れ替わったりしない',
+        );
+      },
     );
-  });
+  }
 
   test(
     'AC-26 日本語の句読点を含む強調を 1 文字ずつ全 prefix で届けても、生の記号が残らず可視文字列は次の prefix の先頭部分になっている',
